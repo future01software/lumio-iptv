@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { View, StyleSheet, Platform } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
+import { createRecoveringHls } from "@/src/services/recoveringHls";
 
 type Props = {
   src: string,
@@ -64,7 +65,6 @@ export default function MiniPlayer(props: Props) {
 
     let hls: any = null;
     let cancelled = false;
-    let networkRetryCount = 0;
 
     async function attachSource() {
       try {
@@ -84,32 +84,21 @@ export default function MiniPlayer(props: Props) {
           const Hls = mod.default;
           if (!Hls.isSupported()) throw new Error("HLS not supported");
           
-          hls = new Hls({ lowLatencyMode: false, startFragPrefetch: true });
-          hls.on(Hls.Events.ERROR, (_event: unknown, data: any) => {
-            if (!data?.fatal) return;
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              if (networkRetryCount < 3) {
-                networkRetryCount++;
-                hls.startLoad();
-              } else {
-                onError?.("Ağ bağlantısı koptu veya zaman aşımı (HLS).");
+          hls = createRecoveringHls({
+            Hls,
+            media: video!,
+            src,
+            // Deep enough that bursty providers don't drop a segment before it's fetched;
+            // see HLS_BUFFER_PRESETS in app/player.tsx.
+            config: { lowLatencyMode: false, startFragPrefetch: true, maxBufferLength: 60, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 8 },
+            onManifestParsed: () => {
+              if (isPlaying && !cancelled) {
+                video!.play().catch(e => console.warn("HLS Play error", e));
               }
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
-            } else {
-              onError?.(data?.details || "Video oynatılamadı");
-            }
+              onReady?.();
+            },
+            onFatal: (message) => onError?.(message),
           });
-          
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (isPlaying && !cancelled) {
-              video!.play().catch(e => console.warn("HLS Play error", e));
-            }
-            onReady?.();
-          });
-
-          hls.loadSource(src);
-          hls.attachMedia(video!);
         }
       } catch (err: any) {
         if (!cancelled) onError?.(err?.message || "Hata");

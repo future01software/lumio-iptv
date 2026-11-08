@@ -17,6 +17,9 @@ import logging
 import uuid
 import requests
 import asyncio
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse
 from pathlib import Path
@@ -770,6 +773,85 @@ async def xtream_series_info(server: str, username: str, password: str, series_i
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=str(e))
 
+# One pooled session for stream traffic: segments reuse the TCP/TLS connection to
+# the IPTV server instead of opening a new one every few seconds.
+_stream_session = requests.Session()
+_stream_session.mount("http://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=32))
+_stream_session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=32))
+
+# Live playlist URL -> (edge URL it redirected to, last time that edge answered).
+_STICKY_TTL = 120
+_sticky_playlists: Dict[str, tuple] = {}
+
+# ---- Live segment prefetch ----
+# Many IPTV servers cap each connection at roughly 1 MB/s, which is barely real time
+# for a 1080p channel, and the player downloads one segment at a time, so any dip
+# froze the picture even on a fast line. Parallel connections each get the full
+# per-connection rate, so when a live playlist passes through, start fetching its
+# newest segments in parallel; the player's request is then served from memory.
+_PREFETCH_SEGMENTS = 4
+_PREFETCH_TTL = 60           # seconds a fetched segment is kept
+_PREFETCH_MAX_BYTES = 200 * 1024 * 1024
+_prefetch_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="seg-prefetch")
+_prefetch_lock = threading.Lock()
+_prefetch_cache: Dict[str, dict] = {}
+
+def _segment_key(url: str) -> str:
+    # Some panels re-sign segment URLs on every playlist refresh; the path is what
+    # identifies the segment.
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+def _prefetch_evict_locked() -> None:
+    now = time.monotonic()
+    for key in [k for k, e in _prefetch_cache.items() if now - e["t"] > _PREFETCH_TTL]:
+        del _prefetch_cache[key]
+    total = sum(len(e["data"] or b"") for e in _prefetch_cache.values())
+    for key in sorted(_prefetch_cache, key=lambda k: _prefetch_cache[k]["t"]):
+        if total <= _PREFETCH_MAX_BYTES:
+            break
+        total -= len(_prefetch_cache[key]["data"] or b"")
+        del _prefetch_cache[key]
+
+def _prefetch_segment(url: str, entry: dict) -> None:
+    try:
+        resp = _stream_session.get(
+            url, timeout=(8, 20), verify=False,
+            headers={"User-Agent": "IPTVSmarters/1.0", "Accept": "*/*", "Connection": "keep-alive"},
+        )
+        resp.raise_for_status()
+        entry["data"] = resp.content
+        entry["ctype"] = resp.headers.get("Content-Type") or "video/mp2t"
+    except Exception:
+        entry["data"] = None  # the player's own request falls back to a direct fetch
+    finally:
+        entry["done"].set()
+
+def _schedule_prefetch(manifest: str, base_url: str) -> None:
+    if "#EXTINF" not in manifest or "#EXT-X-ENDLIST" in manifest:
+        return  # master playlist, or VOD/catchup (the player buffers that fine)
+    segments = [urljoin(base_url, line.strip()) for line in manifest.splitlines()
+                if line.strip() and not line.startswith("#")]
+    with _prefetch_lock:
+        _prefetch_evict_locked()
+        for url in segments[-_PREFETCH_SEGMENTS:]:
+            key = _segment_key(url)
+            if key in _prefetch_cache:
+                continue
+            entry = {"done": threading.Event(), "data": None, "ctype": None, "t": time.monotonic()}
+            _prefetch_cache[key] = entry
+            _prefetch_pool.submit(_prefetch_segment, url, entry)
+
+async def _serve_prefetched(url: str) -> Optional[Response]:
+    with _prefetch_lock:
+        entry = _prefetch_cache.get(_segment_key(url))
+    if entry is None:
+        return None
+    await asyncio.to_thread(entry["done"].wait, 25)
+    if not entry["data"]:
+        return None
+    return Response(entry["data"], media_type=entry["ctype"], headers={"Cache-Control": "no-store"})
+
 @api_router.get("/hls-proxy", name="hls_proxy")
 async def hls_proxy(request: Request, u: str = Query(...), s: str = Query("")):
     url = _decode_proxy_url(u)
@@ -777,15 +859,20 @@ async def hls_proxy(request: Request, u: str = Query(...), s: str = Query("")):
         raise HTTPException(status_code=403, detail="Unsigned proxy URL")
     return await _proxy_hls(request, url)
 
-async def _proxy_hls(request: Request, url: str):
+async def _proxy_hls(request: Request, url: str, remember_as: Optional[str] = None):
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Only HTTP(S) URLs can be proxied")
 
-    try:
-        upstream = requests.get(
+    prefetched = await _serve_prefetched(url)
+    if prefetched is not None:
+        return prefetched
+
+    def _open():
+        resp = _stream_session.get(
             url,
             stream=True,
-            timeout=20,
+            # (connect, read): a stalled segment must fail fast so hls.js can retry it.
+            timeout=(8, 15),
             headers={
                 "User-Agent": "IPTVSmarters/1.0",
                 "Accept": "application/x-mpegURL, application/vnd.apple.mpegurl, */*",
@@ -793,7 +880,14 @@ async def _proxy_hls(request: Request, url: str):
             },
             verify=False
         )
-        upstream.raise_for_status()
+        resp.raise_for_status()
+        return resp
+
+    try:
+        # requests blocks. Run inline in this async handler, one slow segment used to
+        # freeze the whole server: playlist refreshes and the next segments queued
+        # behind it, and the video stalled until the user switched channels.
+        upstream = await asyncio.to_thread(_open)
     except requests.RequestException as exc:
         print("PROXY FETCH FAILED EXCEPTION:", redact_secrets(str(exc)))
         raise HTTPException(status_code=502, detail=f"Proxy fetch failed: {exc}")
@@ -806,7 +900,7 @@ async def _proxy_hls(request: Request, url: str):
     content_iter = upstream.iter_content(chunk_size=1024 * 64)
     probe = b""
     try:
-        probe = next(content_iter, b"")
+        probe = await asyncio.to_thread(next, content_iter, b"")
     except Exception:
         probe = b""
 
@@ -817,11 +911,18 @@ async def _proxy_hls(request: Request, url: str):
     )
 
     if is_manifest:
-        rest = b"".join(content_iter)
+        try:
+            rest = await asyncio.to_thread(b"".join, content_iter)
+        except requests.RequestException as exc:
+            upstream.close()
+            raise HTTPException(status_code=502, detail=f"Proxy fetch failed: {exc}")
         final_url = upstream.url
         upstream.close()
         raw_manifest = (probe + rest).decode("utf-8", errors="replace")
         rewritten = _rewrite_hls_manifest(raw_manifest, final_url, request)
+        _schedule_prefetch(raw_manifest, final_url)
+        if remember_as:
+            _sticky_playlists[remember_as] = (final_url, time.monotonic())
         return Response(
             rewritten,
             media_type="application/vnd.apple.mpegurl",
@@ -927,7 +1028,18 @@ async def play_stream(request: Request, stream_id: str, t: str = Query(...), pro
 
     if proxy:
         # The play token is already authenticated (Fernet), so no proxy signature needed.
-        return await _proxy_hls(request, redirect_url)
+        # Xtream panels redirect /live/... to one of several edge servers, and those can
+        # be minutes apart (measured: ~25 min). The player re-requests this URL on every
+        # playlist refresh, so without pinning it hopped between edges and the picture
+        # jumped back and forth or froze. Stay on the edge the first request landed on,
+        # and only re-resolve when it stops answering.
+        pinned = _sticky_playlists.get(redirect_url)
+        if pinned and time.monotonic() - pinned[1] < _STICKY_TTL:
+            try:
+                return await _proxy_hls(request, pinned[0], remember_as=redirect_url)
+            except HTTPException:
+                _sticky_playlists.pop(redirect_url, None)
+        return await _proxy_hls(request, redirect_url, remember_as=redirect_url)
 
     return RedirectResponse(url=redirect_url, status_code=302)
 

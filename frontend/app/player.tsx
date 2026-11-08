@@ -28,6 +28,7 @@ import { useSeriesEpisodes } from "@/src/store/series-episodes-store";
 import type { SeriesEpisode } from "@/src/types/iptv";
 import { kindLabel } from "@/src/utils/kind-label";
 import { useChromecast } from "@/src/hooks/use-chromecast";
+import { createRecoveringHls } from "@/src/services/recoveringHls";
 
 type ResizeMode = "contain" | "cover" | "fill" | "zoom";
 const RESIZE_ORDER: ResizeMode[] = ["contain", "zoom", "cover", "fill"];
@@ -147,10 +148,21 @@ type WebVideoHandle = {
 // liveSyncDurationCount = how many segments behind the live edge to sit. IPTV
 // streams aren't LL-HLS, so hugging the edge (lowLatencyMode) just leaves no
 // cushion and stutters; 3-4 segments back is what keeps playback smooth.
+//
+// maxBufferLength is deliberately deep for live: some providers publish segments
+// in bursts (two at once) and drop old ones from a short window just as fast. With
+// only ~18s buffered, the player hadn't fetched a segment yet when it left the
+// playlist, leaving a 10s hole: a freeze, then a skip, about once a minute.
+//
+// Some providers also publish faster than real time (measured: ~1.17x), so a
+// player at 1x drifts further behind and content has to go eventually.
+// liveMaxLatencyDurationCount makes that one clean jump back to the live sync
+// point, well before the drift would outrun the buffer and open holes again
+// (holes need latency > maxBufferLength + playlist window).
 const HLS_BUFFER_PRESETS = {
-  small: { backBufferLength: 12, maxBufferLength: 10, maxMaxBufferLength: 18, liveSyncDurationCount: 3 },
-  normal: { backBufferLength: 30, maxBufferLength: 18, maxMaxBufferLength: 30, liveSyncDurationCount: 3 },
-  large: { backBufferLength: 60, maxBufferLength: 30, maxMaxBufferLength: 60, liveSyncDurationCount: 4 },
+  small: { backBufferLength: 12, maxBufferLength: 45, maxMaxBufferLength: 60, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 7 },
+  normal: { backBufferLength: 30, maxBufferLength: 90, maxMaxBufferLength: 120, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10 },
+  large: { backBufferLength: 60, maxBufferLength: 150, maxMaxBufferLength: 180, maxBufferSize: 120 * 1000 * 1000, liveSyncDurationCount: 4, liveMaxLatencyDurationCount: 15 },
 } as const;
 
 // Native (ExoPlayer via expo-video) buffering, modelled on NuvioTV's defaults:
@@ -250,6 +262,8 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const directPlayRef = useRef(false);
+  // True while hls.js drives the element; its errors are then handled by createRecoveringHls.
+  const hlsActiveRef = useRef(false);
   // Re-applied on source change too: the element is keyed by URL.
   useEffect(() => {
     const v = videoRef.current;
@@ -290,7 +304,6 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
 
     let hls: any = null;
     let cancelled = false;
-    let networkRetryCount = 0;
     failureReportedRef.current = false;
     onBuffering(true);
 
@@ -318,37 +331,27 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
           if (!Hls.isSupported()) {
             throw new Error("Bu tarayıcı HLS canlı yayınlarını desteklemiyor.");
           }
-          hls = new Hls({
-            lowLatencyMode: false,
-            startFragPrefetch: true,
-            ...HLS_BUFFER_PRESETS[bufferSize],
-          });
-          hls.on(Hls.Events.ERROR, (_event: unknown, data: any) => {
-            if (!data?.fatal) return;
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              if (networkRetryCount < 3) {
-                networkRetryCount++;
-                hls.startLoad();
-              } else {
-                onBuffering(false);
-                onError("Bağlantı zaman aşımına uğradı veya ağ hatası (HLS).");
+          hlsActiveRef.current = true;
+          hls = createRecoveringHls({
+            Hls,
+            media,
+            src,
+            config: {
+              lowLatencyMode: false,
+              startFragPrefetch: true,
+              ...HLS_BUFFER_PRESETS[bufferSize],
+            },
+            onManifestParsed: () => {
+              if (autoPlay && !cancelled) {
+                media.play().catch(e => console.warn("HLS Play error", e));
               }
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              hls.recoverMediaError();
-            } else {
+            },
+            onFatal: (message) => {
+              hlsActiveRef.current = false;
               onBuffering(false);
-              onError(data?.details || "Canlı yayın web oynatıcıda açılamadı.");
-            }
+              onError(message);
+            },
           });
-          
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (autoPlay && !cancelled) {
-              media.play().catch(e => console.warn("HLS Play error", e));
-            }
-          });
-
-          hls.loadSource(src);
-          hls.attachMedia(media);
         }
       } catch (err: any) {
         if (cancelled) return;
@@ -365,6 +368,7 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
 
     return () => {
       cancelled = true;
+      hlsActiveRef.current = false;
       try { hls?.destroy?.(); } catch {}
       try {
         media.pause();
@@ -427,6 +431,8 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
         reportDirectFailure();
         return;
       }
+      // hls.js is playing: createRecoveringHls recovers and only reports a real failure.
+      if (hlsActiveRef.current) return;
       onBuffering(false);
       onError("Canlı yayın açılamadı. Kaynak, tarayıcının CORS engeline takılıyor olabilir.");
     },

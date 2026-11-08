@@ -3,7 +3,7 @@
   "description": "IPTV Player Desktop Application",
   "author": "IPTV Player Team",
   "main": "expo-router/entry",
-  "version": "1.1.8",
+  "version": "1.1.11",
   "scripts": {
     "preinstall": "node ./scripts/cmd-guard.js --preinstall",
     "start": "expo start",

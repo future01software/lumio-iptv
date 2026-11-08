@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lumio IPTV",
     "slug": "lumio-iptv",
-    "version": "1.1.7",
+    "version": "1.1.11",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "lumioiptv",
@@ -62,7 +62,8 @@
             "enableProguardInReleaseBuilds": true
           }
         }
-      ]
+      ],
+      "./plugins/with-ios-pod-fixes"
     ],
     "experiments": {
       "typedRoutes": true
