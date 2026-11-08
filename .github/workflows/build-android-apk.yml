@@ -1,0 +1,76 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ubuntu-latest already ships the Android SDK (ANDROID_HOME is set)
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Expo prebuild
+        working-directory: frontend
+        run: npx expo prebuild --platform android --clean --no-install
+        env:
+          CI: 1
+
+      # Release build bundles the JS inside the APK, so it runs standalone on the phone.
+      # It is signed with the debug keystore, so it installs directly.
+      - name: Build Android APK (release)
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.enableMinifyInReleaseBuilds=false \
+            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a \
+            -Dorg.gradle.jvmargs=-Xmx4g
+        env:
+          NODE_ENV: production
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp frontend/android/app/build/outputs/apk/release/app-release.apk out/lumio-iptv-v${{ github.run_number }}.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumio-iptv-apk
+          path: out/*.apk
+          retention-days: 30
+
+      - name: Create Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk
+          tag_name: v${{ github.run_number }}
+          name: Lumio IPTV v${{ github.run_number }}
+          body: "Automatic build from commit ${{ github.sha }}"
