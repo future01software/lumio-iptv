@@ -6,8 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+# CI check only: builds a debug-signed APK as a downloadable artifact. Real
+# releases are signed on the release machine and published to lumio-releases.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -57,7 +59,9 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp frontend/android/app/build/outputs/apk/release/app-release.apk out/lumio-iptv-v${{ github.run_number }}.apk
+          for f in frontend/android/app/build/outputs/apk/release/*.apk; do
+            cp "$f" "out/lumio-iptv-ci${{ github.run_number }}-$(basename "$f")"
+          done
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -65,12 +69,3 @@ jobs:
           name: lumio-iptv-apk
           path: out/*.apk
           retention-days: 30
-
-      - name: Create Release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: out/*.apk
-          tag_name: v${{ github.run_number }}
-          name: Lumio IPTV v${{ github.run_number }}
-          body: "Automatic build from commit ${{ github.sha }}"

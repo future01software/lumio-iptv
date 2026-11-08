@@ -187,7 +187,7 @@ android {
 
 dependencies {
 // @generated begin react-native-google-cast-dependencies - expo prebuild (DO NOT MODIFY) sync-3822a3c86222e7aca74039b551612aab7e75365d
-    implementation "com.google.android.gms:play-services-cast-framework:${safeExtGet('castFrameworkVersion', '+')}"
+    implementation "com.google.android.gms:play-services-cast-framework:${safeExtGet('castFrameworkVersion', '22.3.1')}"
 // @generated end react-native-google-cast-dependencies
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
