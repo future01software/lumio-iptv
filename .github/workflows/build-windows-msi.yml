@@ -1,0 +1,63 @@
+name: Build Windows MSI
+
+# Manual: builds the Windows installer on a GitHub Windows runner and uploads it as an
+# artifact. Publishing (lumio-releases + latest.json) is done from the artifact, so this
+# workflow needs no secrets. The MSI is unsigned, the same as builds made on a PC.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msi:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      # build:backend expects backend\venv (PyInstaller bundles only what server.py imports).
+      - name: Backend venv
+        working-directory: backend
+        shell: pwsh
+        run: |
+          python -m venv venv
+          .\venv\Scripts\python.exe -m pip install --upgrade pip
+          .\venv\Scripts\python.exe -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Full requirements failed; installing the backend's runtime imports only"
+            .\venv\Scripts\python.exe -m pip install fastapi==0.110.1 uvicorn==0.25.0 cryptography python-dotenv motor==3.3.1 pymongo==4.6.3 pydantic requests
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          .\venv\Scripts\python.exe -m pip install pyinstaller
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build MSI
+        working-directory: frontend
+        run: npm run build:msi
+        env:
+          CI: 1
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumio-iptv-msi
+          path: frontend/release/*.msi
+          retention-days: 30
