@@ -18,6 +18,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO = "future01software/lumio-releases";
+// The open-source repo mirrors the installers on its own release page (no latest.json there).
+const SOURCE_REPO = "future01software/lumio-iptv";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -96,3 +98,12 @@ if (existing) {
   });
 }
 console.log(`Published https://github.com/${REPO}/releases/tag/v${version}`);
+
+const installers = [msi.file, ...Object.values(apks).map((a) => a.file)];
+try {
+  execFileSync("gh", ["release", "view", tag, "-R", SOURCE_REPO], { stdio: "ignore" });
+  execFileSync("gh", ["release", "upload", tag, "-R", SOURCE_REPO, "--clobber", ...installers], { stdio: "inherit" });
+  console.log(`Also attached to https://github.com/${SOURCE_REPO}/releases/tag/${tag}`);
+} catch {
+  console.warn(`${SOURCE_REPO} has no ${tag} release; installers not mirrored there.`);
+}
