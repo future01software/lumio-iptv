@@ -7,7 +7,7 @@ import * as FileSystem from "expo-file-system/legacy";
 // private, so installed apps couldn't read its releases). Every release carries
 // a latest.json manifest; GitHub's "latest/download" redirect always serves the
 // newest one without hitting the rate-limited REST API.
-export const RELEASES_REPO = "future01software/lumio-releases";
+export const RELEASES_REPO = "future01software/lumio-iptv";
 const MANIFEST_URL = `https://github.com/${RELEASES_REPO}/releases/latest/download/latest.json`;
 
 export type UpdateAsset = { url: string; sha256?: string; md5?: string; size?: number };

@@ -138,6 +138,8 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
   const setAutoplay = usePlayerSettings((s) => s.setAutoplay);
   const resume = usePlayerSettings((s) => s.resume);
   const setResume = usePlayerSettings((s) => s.setResume);
+  const showClock = usePlayerSettings((s) => s.showClock);
+  const setShowClock = usePlayerSettings((s) => s.setShowClock);
   const hwAccel = usePlayerSettings((s) => s.hwAccel);
   const setHwAccel = usePlayerSettings((s) => s.setHwAccel);
   const hideAdult = usePlayerSettings((s) => s.hideAdult);
@@ -270,6 +272,7 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
       <Group title={t("settings.group.playback")}>
         <ToggleRow icon="play-circle-outline" label={t("settings.autoplay")} value={autoplay} onValueChange={setAutoplay} testID="set-autoplay" accentColor={accentColor} />
         <ToggleRow icon="play-skip-forward-outline" label={t("settings.resume")} value={resume} onValueChange={setResume} testID="set-resume" accentColor={accentColor} />
+        <ToggleRow icon="time-outline" label={t("settings.clock")} value={showClock} onValueChange={setShowClock} testID="set-clock" accentColor={accentColor} />
         {!IS_WEB && (
           <ToggleRow icon="hardware-chip-outline" label={t("settings.hw")} value={hwAccel} onValueChange={setHwAccel} testID="set-hw" accentColor={accentColor} />
         )}

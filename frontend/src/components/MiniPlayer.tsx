@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { View, StyleSheet, Platform } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { createRecoveringHls } from "@/src/services/recoveringHls";
+import { createRecoveringHls, readStreamStats, type StreamStats } from "@/src/services/recoveringHls";
 
 type Props = {
   src: string,
@@ -10,6 +10,8 @@ type Props = {
   muted?: boolean,
   onReady?: () => void,
   onError?: (err: string) => void,
+  /** Web only: called every 2s with resolution/codec/fps/bitrate/buffer (null until the first frame). */
+  onStats?: (stats: StreamStats | null) => void,
 };
 
 /** Android TV / native: muted expo-video preview, same role as the web <video> below. */
@@ -55,8 +57,17 @@ function NativeMiniPlayer({ src, isPlaying, muted = true, onReady, onError }: Pr
 }
 
 export default function MiniPlayer(props: Props) {
-  const { src, isPlaying, muted = true, onReady, onError } = props;
+  const { src, isPlaying, muted = true, onReady, onError, onStats } = props;
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const onStatsRef = useRef(onStats);
+  onStatsRef.current = onStats;
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    onStatsRef.current?.(null);
+    const id = setInterval(() => onStatsRef.current?.(readStreamStats(videoRef.current)), 2000);
+    return () => clearInterval(id);
+  }, [src]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -65,6 +76,8 @@ export default function MiniPlayer(props: Props) {
 
     let hls: any = null;
     let cancelled = false;
+    // New channel: forget the previous stream's codec/bitrate.
+    delete (video as any).__lumioStats;
 
     async function attachSource() {
       try {

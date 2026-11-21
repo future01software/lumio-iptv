@@ -1,9 +1,14 @@
 # Lumio IPTV
 
-![Lumio IPTV](https://raw.githubusercontent.com/future01software/lumio-releases/main/screenshots/home.jpg)
+**Download:** ready-to-install builds are on this repository's
+[Releases page](https://github.com/future01software/lumio-iptv/releases/latest)
+(macOS `.dmg`, Windows `.msi`; Android `.apk` when available).
 
-**Download:** ready-to-install builds for macOS, Windows, Android and Android TV are on
-[lumio-releases](https://github.com/future01software/lumio-releases/releases/latest).
+**İndir:** Kurulum dosyaları bu deponun [Releases](https://github.com/future01software/lumio-iptv/releases/latest)
+sayfasında (Mac için `.dmg`, Windows için `.msi`). Mac'te ilk açılışta Finder'da sağ tıklayıp **Aç**'ı seç.
+
+> Lumio 1.1.11 veya daha eskisini kullanıyorsan 1.1.12'yi buradan bir kez elle indirip kur;
+> sonraki güncellemeler uygulamanın içinden gelir.
 
 Lumio is only a player: it ships with no channels, movies or series. Use it with your own
 legal IPTV subscription (Xtream Codes or M3U).
@@ -59,9 +64,8 @@ python server.py
 ```
 
 ## Releasing a New Version
-Installed apps update from the public, binaries-only repo
-[`future01software/lumio-releases`](https://github.com/future01software/lumio-releases)
-(installers and `latest.json` live there, separate from the source).
+Installed apps (1.1.12 and later) update from this repository's Releases: each release
+carries the installers and a `latest.json` (version, download URLs, SHA-256) the apps read.
 
 1. Bump the version in `frontend/package.json`, `frontend/app.json` and
    `frontend/android/app/build.gradle` (`versionName`, and increase `versionCode`).

@@ -17,7 +17,8 @@ import { LOW_END } from "@/src/utils/perf";
 import { PosterArt, FocusRing, CARD_GUTTER } from "@/src/components/PosterArt";
 import { colors, spacing, radius, font, screenBackground } from "@/src/theme/tokens";
 import { cleanChannelName, cleanIPTVName } from "@/src/utils/clean-name";
-import { filterMovies, filterSeries } from "@/src/utils/content-filter";
+import { filterMovies, filterSeries, looksAdult } from "@/src/utils/content-filter";
+import { usePlayerSettings } from "@/src/store/player-settings-store";
 import { searchMovie, searchSeries, getImageUrl, type TMDBMovie, type TMDBSeries } from "@/src/utils/tmdb";
 import { ChannelAvatar } from "@/src/components/ChannelAvatar";
 import { SkeletonRow } from "@/src/components/SkeletonRow";
@@ -159,6 +160,7 @@ export default function Home() {
   );
 
   const blocked = useMemo(() => activeProfile?.blockedKeywords || [], [activeProfile?.blockedKeywords]);
+  const hideAdult = usePlayerSettings((s) => s.hideAdult);
   const safeMovies = useMemo(() => filterMovies(playlist?.movies || [], blocked), [playlist, blocked]);
   const safeSeries = useMemo(() => filterSeries(playlist?.series || [], blocked), [playlist, blocked]);
 
@@ -177,17 +179,24 @@ export default function Home() {
   const recentChannelObjs = useMemo(() => {
     if (!playlist) return [];
     const map = new Map(playlist.channels.map((c) => [c.id, c]));
-    return recentChannels.map((id) => map.get(id)).filter(Boolean) as Channel[];
-  }, [recentChannels, playlist]);
+    const list = recentChannels.map((id) => map.get(id)).filter(Boolean) as Channel[];
+    return hideAdult ? list.filter((c) => !looksAdult(c.name, c.group)) : list;
+  }, [recentChannels, playlist, hideAdult]);
 
   // One card per series: resume the latest episode, or its next episode once
   // finished (see buildContinueWatching). Finished series' episode lists are
   // fetched on demand so the next-up card can appear.
   const episodesBySeries = useSeriesEpisodes((s) => s.bySeries);
   const loadEpisodes = useSeriesEpisodes((s) => s.load);
-  const { entries: continueWatching, missingSeries } = useMemo(
+  const { entries: continueWatchingAll, missingSeries } = useMemo(
     () => buildContinueWatching(history, episodesBySeries, 10),
     [history, episodesBySeries],
+  );
+  // "Hide adult content" also covers these rows: history and recents were saved
+  // before the setting was on, and names like "XXX: ..." sit outside adult groups.
+  const continueWatching = useMemo(
+    () => (hideAdult ? continueWatchingAll.filter((e) => !looksAdult(e.name, (e as any).group)) : continueWatchingAll),
+    [continueWatchingAll, hideAdult],
   );
   const missingKey = missingSeries.join(",");
   useEffect(() => {
@@ -634,9 +643,15 @@ const ContinueWatchingCard = React.memo(function ContinueWatchingCard({ item, ro
     useFocusScale(1.04, `continue:${item.item_id}`);
   const remainingLabel = formatRemaining(item.position || 0, item.duration || 0);
   const hasProgress = item.duration > 0 && item.position > 0;
+  const removeHistory = useIPTV((s) => s.removeHistory);
+  const [hovered, setHovered] = useState(false);
   return (
-    <View style={[styles.posterCard, { width: POSTER_W, paddingHorizontal: CARD_GUTTER }]}>
+    <View
+      style={[styles.posterCard, { width: POSTER_W, paddingHorizontal: CARD_GUTTER }]}
+      {...hoverProps(setHovered)}
+    >
       <CardPressable
+        onLongPress={() => removeHistory(item.item_id)}
         hasTVPreferredFocus={hasTVPreferredFocus}
         onFocus={handleFocus}
         onBlur={handleBlur}
@@ -684,11 +699,36 @@ const ContinueWatchingCard = React.memo(function ContinueWatchingCard({ item, ro
         )}
         <FocusRing visible={focused} />
       </CardPressable>
+      {(hovered || focused) && (
+        <RemoveButton onPress={() => removeHistory(item.item_id)} testID={`continue-remove-${item.item_id}`} />
+      )}
       <Text style={[styles.posterTitle, styles.cardTitle, focused && styles.cardTitleFocused]} numberOfLines={1}>{cleanIPTVName(item.name)}</Text>
       {!!item.episodeLabel && <Text style={styles.episodeLabel}>{item.episodeLabel}</Text>}
     </View>
   );
 });
+
+// Web: plain pointer events on the card wrapper (Pressable's onHoverIn never fired on a
+// wrapper around another pressable). Native has no hover; long-press removes there.
+function hoverProps(set: (v: boolean) => void): any {
+  if (Platform.OS !== "web") return {};
+  return { onPointerEnter: () => set(true), onPointerLeave: () => set(false) };
+}
+
+/** Small "×" on a card: drops it from Continue Watching / Recent Channels. Long-press does the same on TV and phones. */
+function RemoveButton({ onPress, testID }: { onPress: () => void; testID: string }) {
+  return (
+    <Pressable
+      onPress={(e: any) => { e?.stopPropagation?.(); onPress(); }}
+      style={styles.removeBtn}
+      accessibilityLabel="Listeden kaldır"
+      testID={testID}
+      focusable={false}
+    >
+      <Ionicons name="close" size={14} color="#fff" />
+    </Pressable>
+  );
+}
 
 const HomePosterCard = React.memo(function HomePosterCard({ item, router, POSTER_W, isSeries, isFavorite }: any) {
   const row = isFavorite ? "fav" : isSeries ? "series" : "movies";
@@ -732,11 +772,15 @@ const HomePosterCard = React.memo(function HomePosterCard({ item, router, POSTER
 const ChannelMini = React.memo(function ChannelMini({ channel, epg, router }: { channel: Channel; epg?: any[]; router: any }) {
   const { accentColor } = useTheme();
   const pushRecent = useIPTV((s) => s.pushRecent);
+  const removeRecent = useIPTV((s) => s.removeRecent);
+  const [hovered, setHovered] = useState(false);
   const { current } = currentEPG(epg);
   const { focused, animatedStyle, handleFocus, handleBlur, handlePressIn, handlePressOut, hasTVPreferredFocus } =
     useFocusScale(1.06, `recent:${channel.id}`);
   return (
+    <View {...hoverProps(setHovered)}>
     <CardPressable
+      onLongPress={() => removeRecent(channel.id)}
       hasTVPreferredFocus={hasTVPreferredFocus}
       onFocus={handleFocus}
       onBlur={handleBlur}
@@ -767,10 +811,13 @@ const ChannelMini = React.memo(function ChannelMini({ channel, epg, router }: { 
       <Text style={styles.channelName} numberOfLines={1}>{cleanChannelName(channel.name)}</Text>
       <Text style={styles.channelEpg} numberOfLines={1}>{current?.title || "Yayın akışı yok"}</Text>
     </CardPressable>
+    {(hovered || focused) && <RemoveButton onPress={() => removeRecent(channel.id)} testID={`recent-remove-${channel.id}`} />}
+    </View>
   );
 });
 
 const styles = StyleSheet.create({
+  removeBtn: { position: "absolute", top: 6, right: 10, width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.75)", borderWidth: 1, borderColor: "rgba(255,255,255,0.35)", zIndex: 20 },
   root: { flex: 1, backgroundColor: screenBackground },
   empty: { flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xxl, gap: spacing.sm },
   emptyTitle: { color: colors.onSurface, fontSize: font.xl, fontWeight: "800", marginTop: spacing.md },

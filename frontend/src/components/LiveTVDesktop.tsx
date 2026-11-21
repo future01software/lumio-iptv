@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useDeferredValue, useRef, useCallback } from "react";
 import { LOW_END } from "@/src/utils/perf";
-import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, TouchableOpacity, Platform, FlatList } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, TouchableOpacity, Platform, FlatList, useWindowDimensions } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,6 +19,7 @@ import { colors, spacing, radius, font, screenBackground } from "@/src/theme/tok
 import type { Channel, EPGProgram } from "@/src/types/iptv";
 import type { Reminder } from "@/src/store/reminders-store";
 import MiniPlayer from "./MiniPlayer";
+import type { StreamStats } from "@/src/services/recoveringHls";
 import { FocusPressable } from "./FocusPressable";
 import { fetchCatchupUrl } from "@/src/services/provider";
 import { useReminders, reminderId } from "@/src/store/reminders-store";
@@ -38,6 +39,23 @@ const TOTAL_WIDTH = HOURS_TO_SHOW * 60 * PIXELS_PER_MINUTE;
 // heaviest thing a cheap box does, so zapping through the list shouldn't open each channel.
 // Light mode waits longer so scrolling the channel list never starts a decode.
 const PREVIEW_DELAY_MS = IS_NATIVE ? (LOW_END ? 2500 : 1000) : 0;
+
+const HOUR_STEP_PX = 3 * 60 * PIXELS_PER_MINUTE;
+
+/** "#RRGGBB" + alpha → rgba(), for tinted fills of the accent color. */
+function withAlpha(hex: string, a: number) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return `rgba(255,255,255,${a})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function resolutionLabel(h: number) {
+  if (h >= 2000) return "4K";
+  if (h >= 1000) return "1080p";
+  if (h >= 700) return "720p";
+  return `${h}p`;
+}
 
 function buildWebVideoUrl(rawUrl: string) {
   const uri = String(rawUrl || "");
@@ -59,10 +77,20 @@ export default function LiveTVDesktop() {
   const [activeGroup, setActiveGroup] = useState<string>(ALL);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
+  const [hideNoGuide, setHideNoGuide] = useState(false);
+  const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
   const activeProfile = useProfiles((s) => s.active());
   const blocked = useMemo(() => activeProfile?.blockedKeywords || [], [activeProfile?.blockedKeywords]);
   const { t } = useI18n();
   const { accentColor } = useTheme();
+
+  // Small windows (laptops, half-screen): shrink the preview so the info panel keeps
+  // room, and drop the toolbar's long labels instead of letting buttons overlap.
+  const { width: winW } = useWindowDimensions();
+  const contentW = winW - 72 - 220; // nav rail + groups sidebar
+  const compact = contentW < 1000;
+  const previewH = Math.round(Math.min(320, Math.max(180, (contentW * 0.5 * 9) / 16)));
+  const channelColW = compact ? 210 : 260;
 
   const sortedLiveGroups = useMemo(
     () => sortLiveGroups(playlist?.groups.live || [], playlist?.channels || []),
@@ -82,8 +110,9 @@ export default function LiveTVDesktop() {
       const q = deferredSearch.toLowerCase();
       list = list.filter((c) => c.name.toLowerCase().includes(q));
     }
+    if (hideNoGuide) list = list.filter((c) => (epgByChannel[c.epg_channel_id || ""] || []).length > 0);
     return list;
-  }, [playlist, activeGroup, favorites, deferredSearch, blocked]);
+  }, [playlist, activeGroup, favorites, deferredSearch, blocked, hideNoGuide, epgByChannel]);
 
   const [previewChannel, setPreviewChannel] = useState<Channel | null>(null);
   // The channel actually streaming in the preview (lags previewChannel on TV, see PREVIEW_DELAY_MS).
@@ -203,15 +232,64 @@ export default function LiveTVDesktop() {
   // EPG Grid Calculations
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const int = setInterval(() => setNow(Date.now()), 60000);
+    const int = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(int);
   }, []);
 
-  const [gridStart] = useState(() => {
+  // Day picker: 0 = today (window starts HOURS_BACK before now), other days start at
+  // midnight on the web (24h window) or at the same clock time on TV (short window).
+  const [dayOffset, setDayOffset] = useState(0);
+  const gridStart = useMemo(() => {
     const d = new Date();
-    d.setHours(d.getHours() - HOURS_BACK, 0, 0, 0);
+    if (dayOffset === 0 || IS_NATIVE) {
+      d.setHours(d.getHours() - HOURS_BACK, 0, 0, 0);
+    } else {
+      d.setHours(0, 0, 0, 0);
+    }
+    d.setDate(d.getDate() + dayOffset);
     return d.getTime();
-  });
+  }, [dayOffset]);
+  const gridScrollRef = useRef<any>(null);
+  const gridScrollX = useRef(0);
+  // Left edge of the visible guide, updated when scrolling settles: titles of programmes
+  // that started off-screen are shifted to stay readable (TV boxes skip this; it re-renders rows).
+  const [viewLeft, setViewLeft] = useState(0);
+  const viewLeftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteScrollX = useCallback((x: number) => {
+    gridScrollX.current = x;
+    if (IS_NATIVE) return;
+    if (viewLeftTimer.current) clearTimeout(viewLeftTimer.current);
+    viewLeftTimer.current = setTimeout(() => setViewLeft(Math.round(x)), 120);
+  }, []);
+  const scrollGridTo = useCallback((x: number, animated = true) => {
+    const max = Math.max(0, TOTAL_WIDTH - 400);
+    const clamped = Math.min(max, Math.max(0, x));
+    gridScrollRef.current?.scrollTo({ x: clamped, y: 0, animated });
+    noteScrollX(clamped);
+  }, [noteScrollX]);
+  const goToNow = useCallback(() => {
+    setDayOffset(0);
+    // After the day switch re-renders the grid, put "now" a little in from the left edge.
+    setTimeout(() => {
+      const d = new Date();
+      d.setHours(d.getHours() - HOURS_BACK, 0, 0, 0);
+      scrollGridTo(((Date.now() - d.getTime()) / 60000) * PIXELS_PER_MINUTE - 30 * PIXELS_PER_MINUTE, false);
+    }, 0);
+  }, [scrollGridTo]);
+  useEffect(() => { goToNow(); }, [goToNow]);
+  const dayChips = useMemo(() => {
+    const maxBack = playlist?.channels?.some((c) => c.catchup) ? 3 : 1;
+    const out: { offset: number; label: string }[] = [];
+    for (let o = -maxBack; o <= 1; o++) {
+      const d = new Date();
+      d.setDate(d.getDate() + o);
+      const label = o === 0 ? t("epg.today") : o === -1 ? t("epg.yesterday") : o === 1 ? t("epg.tomorrow")
+        : d.toLocaleDateString([], { weekday: "short", day: "numeric" });
+      out.push({ offset: o, label });
+    }
+    return out;
+  }, [playlist, t]);
+  const dayTitle = useMemo(() => new Date(gridStart + HOURS_BACK * 3600000).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }), [gridStart]);
 
   const currentTimeOffset = ((now - gridStart) / 60000) * PIXELS_PER_MINUTE;
 
@@ -292,10 +370,10 @@ export default function LiveTVDesktop() {
 
       <View style={styles.content}>
         {/* TOP: MINI PLAYER & INFO */}
-        <View style={styles.topArea}>
-          <View style={styles.playerWrapper}>
+        <View style={[styles.topArea, { height: previewH }]}>
+          <View style={[styles.playerWrapper, { height: previewH }]}>
             {streamChannel && previewActive ? (
-              <MiniPlayer src={buildWebVideoUrl(streamChannel.url)} isPlaying={true} />
+              <MiniPlayer src={buildWebVideoUrl(streamChannel.url)} isPlaying={true} onStats={setStreamStats} />
             ) : (
               <View style={styles.noPlayer}><Ionicons name="tv" size={48} color={colors.textMuted} /></View>
             )}
@@ -330,9 +408,21 @@ export default function LiveTVDesktop() {
                       textStyle={{ fontSize: 22 }}
                     />
                   </View>
-                  <View>
-                    <Text style={styles.infoChName}>{cleanChannelName(previewChannel.name)}</Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.infoChName} numberOfLines={1}>{cleanChannelName(previewChannel.name)}</Text>
                     <Text style={styles.infoChGroup}>{prettyGroup(previewChannel.group || "")}</Text>
+                    {streamStats && streamChannel?.id === previewChannel.id && (
+                      <View style={styles.badgeRow} testID="live-stream-stats">
+                        <Text style={[styles.badge, { borderColor: accentColor, color: accentColor }]}>{resolutionLabel(streamStats.height)}</Text>
+                        {!!streamStats.codec && <Text style={styles.badge}>{streamStats.codec}</Text>}
+                        {!!streamStats.fps && <Text style={styles.badge}>{streamStats.fps} fps</Text>}
+                        {!!streamStats.kbps && <Text style={styles.badge}>{(streamStats.kbps / 1000).toFixed(1)} Mb/s</Text>}
+                        <View style={styles.bufferBadge}>
+                          <View style={[styles.bufferDot, { backgroundColor: streamStats.bufferSec >= 10 ? "#34C759" : streamStats.bufferSec >= 4 ? "#FFB020" : "#FF453A" }]} />
+                          <Text style={styles.bufferText}>{t("stats.buffer")} {Math.round(streamStats.bufferSec)} sn</Text>
+                        </View>
+                      </View>
+                    )}
                   </View>
                 </View>
 
@@ -388,10 +478,45 @@ export default function LiveTVDesktop() {
           </View>
         </View>
 
+        {/* GUIDE TOOLBAR: day, day picker, hour navigation */}
+        <View style={styles.guideBar}>
+          {!compact && <Text style={styles.guideDay} numberOfLines={1}>{dayTitle}</Text>}
+          <View style={styles.dayChips}>
+            {dayChips.map(({ offset, label }) => {
+              const on = offset === dayOffset;
+              return (
+                <FocusPressable
+                  key={offset}
+                  onPress={() => { setDayOffset(offset); setTimeout(() => scrollGridTo(offset === 0 ? (((now - gridStart) / 60000) - 30) * PIXELS_PER_MINUTE : 18 * 60 * PIXELS_PER_MINUTE, false), 0); }}
+                  style={({ focused }: any) => [styles.dayChip, on && { backgroundColor: accentColor, borderColor: accentColor }, focused && { borderColor: "#fff" }]}
+                  testID={`epg-day-${offset}`}
+                >
+                  <Text style={[styles.dayChipText, on && { color: "#fff" }]}>{label}</Text>
+                </FocusPressable>
+              );
+            })}
+          </View>
+          <View style={styles.hourNav}>
+            <FocusPressable onPress={() => scrollGridTo(gridScrollX.current - HOUR_STEP_PX)} style={({ focused }: any) => [styles.navBtn, focused && { borderColor: accentColor }]} testID="epg-back">
+              <Text style={styles.navBtnText}>{t("epg.back")}</Text>
+            </FocusPressable>
+            <FocusPressable onPress={goToNow} style={({ focused }: any) => [styles.navBtn, { borderColor: accentColor }, focused && { backgroundColor: withAlpha(accentColor, 0.25) }]} testID="epg-now">
+              <Text style={[styles.navBtnText, { color: accentColor }]}>{t("epg.now")}</Text>
+            </FocusPressable>
+            <FocusPressable onPress={() => scrollGridTo(gridScrollX.current + HOUR_STEP_PX)} style={({ focused }: any) => [styles.navBtn, focused && { borderColor: accentColor }]} testID="epg-fwd">
+              <Text style={styles.navBtnText}>{t("epg.fwd")}</Text>
+            </FocusPressable>
+            <FocusPressable onPress={() => setHideNoGuide((v) => !v)} style={({ focused }: any) => [styles.navBtn, hideNoGuide && { backgroundColor: withAlpha(accentColor, 0.25), borderColor: accentColor }, focused && { borderColor: "#fff" }]} testID="epg-hide-empty" accessibilityLabel={t("epg.hide_empty")}>
+              <Ionicons name={hideNoGuide ? "eye-off" : "eye-off-outline"} size={14} color="#fff" />
+              {!compact && <Text style={styles.navBtnText}>{t("epg.hide_empty")}</Text>}
+            </FocusPressable>
+          </View>
+        </View>
+
         {/* BOTTOM: 2D EPG GRID */}
         <View style={styles.gridContainer}>
           {/* LEFT COLUMN: Channels */}
-          <View style={styles.gridLeftCol}>
+          <View style={[styles.gridLeftCol, { width: channelColW }]}>
             <View style={styles.gridHeaderLeft}>
               <Ionicons name="search" size={16} color={colors.textMuted} />
               <Text style={styles.gridHeaderText}>Kanallar</Text>
@@ -432,7 +557,15 @@ export default function LiveTVDesktop() {
           </View>
 
           {/* RIGHT COLUMN: Scrolling Grid */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.gridScrollArea} contentContainerStyle={{width: TOTAL_WIDTH}}>
+          <ScrollView
+            ref={gridScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={true}
+            style={styles.gridScrollArea}
+            contentContainerStyle={{ width: TOTAL_WIDTH, flexDirection: "column" }}
+            scrollEventThrottle={32}
+            onScroll={(e) => noteScrollX(e.nativeEvent.contentOffset.x)}
+          >
             {/* Timeline Header */}
             <View style={styles.timelineHeader}>
               {Array.from({ length: HOURS_TO_SHOW }).map((_, i) => {
@@ -445,12 +578,19 @@ export default function LiveTVDesktop() {
               })}
             </View>
 
-            {/* Current Time Blue Line */}
+            {/* Now: time pill on the ruler + line through the rows */}
             {currentTimeOffset > 0 && currentTimeOffset < TOTAL_WIDTH && (
-              <View style={[styles.currentTimeLine, { left: currentTimeOffset, backgroundColor: accentColor }]} />
+              <>
+                <View style={[styles.currentTimeLine, { left: currentTimeOffset, backgroundColor: accentColor }]} pointerEvents="none" />
+                <View style={[styles.nowPill, { left: currentTimeOffset - 26, backgroundColor: accentColor }]} pointerEvents="none" testID="epg-now-pill">
+                  <Text style={styles.nowPillText}>{fmtClock(now)}</Text>
+                </View>
+              </>
             )}
 
-            {/* Programs List */}
+            {/* Programs List. Needs an explicit width: inside the horizontal ScrollView a
+                flex child collapses to 0px wide, which left the whole guide blank. */}
+            <View style={{ width: TOTAL_WIDTH, flex: 1 }}>
             <FlashList
               ref={rightListRef}
               data={channels}
@@ -468,9 +608,12 @@ export default function LiveTVDesktop() {
                   accentColor={accentColor}
                   reminders={reminders}
                   onProgramPress={onProgramPress}
+                  noScheduleLabel={t("epg.no_schedule")}
+                  viewLeft={viewLeft}
                 />
               )}
             />
+            </View>
           </ScrollView>
         </View>
       </View>
@@ -499,6 +642,8 @@ const GuideRow = React.memo(function GuideRow({
   accentColor,
   reminders,
   onProgramPress,
+  noScheduleLabel,
+  viewLeft,
 }: {
   channel: Channel;
   progs: EPGProgram[] | undefined;
@@ -508,6 +653,8 @@ const GuideRow = React.memo(function GuideRow({
   accentColor: string;
   reminders: Record<string, Reminder>;
   onProgramPress: (ch: Channel, prog: EPGProgram, action: "catchup" | "remind") => void;
+  noScheduleLabel: string;
+  viewLeft: number;
 }) {
   const gridEnd = gridStart + HOURS_TO_SHOW * 3600000;
   const blocks = useMemo(() => {
@@ -530,23 +677,30 @@ const GuideRow = React.memo(function GuideRow({
         const isLive = s <= now && e > now;
         const canCatchup = e <= now && !!channel.catchup;
         const isFuture = s > now;
+        const isPast = e <= now;
+        const progress = isLive ? Math.min(1, Math.max(0, (now - s) / (e - s))) : 0;
         const hasReminder = isFuture && !!reminders[reminderId(channel.id, p.start)];
         const BlockTag: any = canCatchup || isFuture ? Pressable : View;
         const action = canCatchup ? "catchup" : isFuture ? "remind" : null;
         return (
           <BlockTag
             key={`${p.start}-${idx}`}
-            style={[styles.progBlock, { left, width }, isLive && { backgroundColor: "rgba(255,255,255,0.1)", borderColor: accentColor }, canCatchup && { borderColor: accentColor, borderStyle: "dashed" }, hasReminder && { backgroundColor: "rgba(255,255,255,0.06)" }]}
+            style={[styles.progBlock, { left, width }, isPast && { opacity: canCatchup ? 0.7 : 0.45 }, isLive && { backgroundColor: "rgba(255,255,255,0.08)", borderColor: accentColor }, canCatchup && { borderColor: accentColor, borderStyle: "dashed" }, hasReminder && { backgroundColor: "rgba(255,255,255,0.06)" }]}
             {...(action ? { onPress: () => onProgramPress(channel, p, action) } : {})}
           >
+            {isLive && (
+              <View pointerEvents="none" style={[styles.liveFill, { width: `${progress * 100}%`, backgroundColor: withAlpha(accentColor, 0.18) }]} />
+            )}
+            <View style={{ marginLeft: Math.max(0, Math.min(viewLeft - left, width - 140)) }}>
             <Text style={[styles.progBlockTitle, isLive && { color: accentColor }]} numberOfLines={1}>
               {hasReminder ? "🔔 " : ""}{p.title}
             </Text>
             <Text style={styles.progBlockTime}>{fmtClock(p.start)} - {fmtClock(p.stop)}{canCatchup ? "  ↻" : ""}</Text>
+            </View>
           </BlockTag>
         );
       }) : (
-        <View style={styles.noDataRow}><Text style={styles.noDataText}>Veri yok</Text></View>
+        <View style={styles.noDataRow}><Text style={[styles.noDataText, { marginLeft: viewLeft }]}>{noScheduleLabel}</Text></View>
       )}
     </View>
   );
@@ -572,7 +726,7 @@ const styles = StyleSheet.create({
   zapOverlay: { position: "absolute", top: 12, right: 12, backgroundColor: "rgba(0,0,0,0.75)", paddingHorizontal: 14, paddingVertical: 6, borderRadius: radius.md, zIndex: 30 },
   zapText: { color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: 2, fontVariant: ["tabular-nums"] },
   
-  infoWrapper: { flex: 1, padding: spacing.xl, backgroundColor: colors.surfaceSecondary, borderLeftWidth: 1, borderColor: colors.border },
+  infoWrapper: { flex: 1, minWidth: 0, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderLeftWidth: 1, borderColor: colors.border },
   infoChHeader: { flexDirection: "row", alignItems: "center", gap: 16, marginBottom: 24, borderBottomWidth: 1, borderColor: colors.border, paddingBottom: 16 },
   infoChLogo: { width: 64, height: 64, borderRadius: 8, backgroundColor: colors.surface },
   infoChName: { color: colors.onSurface, fontSize: 20, fontWeight: "800", textTransform: "uppercase" },
@@ -607,12 +761,30 @@ const styles = StyleSheet.create({
   timeSlotText: { color: colors.textMuted, fontSize: 12, fontWeight: "600" },
   
   currentTimeLine: { position: "absolute", top: 40, bottom: 0, width: 2, zIndex: 20 },
+  nowPill: { position: "absolute", top: 9, width: 52, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", zIndex: 21 },
+  nowPillText: { color: "#fff", fontSize: 11, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  liveFill: { position: "absolute", left: 0, top: 0, bottom: 0 },
+
+  guideBar: { height: 48, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: spacing.md, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  guideDay: { color: colors.onSurface, fontSize: 14, fontWeight: "800", minWidth: 150 },
+  dayChips: { flexDirection: "row", gap: 6, flex: 1, minWidth: 0, overflow: "hidden" },
+  dayChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.borderStrong },
+  dayChipText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
+  hourNav: { flexDirection: "row", gap: 6 },
+  navBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 5, borderRadius: radius.md, borderWidth: 1, borderColor: colors.borderStrong },
+  navBtnText: { color: colors.onSurface, fontSize: 12, fontWeight: "700" },
+
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 },
+  badge: { color: colors.onSurface, fontSize: 11, fontWeight: "800", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, borderWidth: 1, borderColor: colors.borderStrong, overflow: "hidden" },
+  bufferBadge: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: "rgba(255,255,255,0.06)" },
+  bufferDot: { width: 7, height: 7, borderRadius: 4 },
+  bufferText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   
   programsRow: { height: 60, borderBottomWidth: 1, borderColor: colors.border, position: "relative" },
   progBlock: { position: "absolute", height: "100%", justifyContent: "center", paddingHorizontal: 12, borderLeftWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   progBlockTitle: { color: colors.onSurface, fontSize: 13, fontWeight: "500", marginBottom: 2 },
   progBlockTime: { color: colors.textMuted, fontSize: 11 },
   
-  noDataRow: { flex: 1, justifyContent: "center", paddingLeft: 16 },
-  noDataText: { color: colors.border, fontSize: 12 }
+  noDataRow: { position: "absolute", left: 0, right: 0, top: 6, bottom: 6, justifyContent: "center", paddingLeft: 16, borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.03)" },
+  noDataText: { color: colors.textMuted, fontSize: 12, opacity: 0.6 }
 });

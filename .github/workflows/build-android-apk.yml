@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 # CI check only: builds a debug-signed APK as a downloadable artifact. Real
-# releases are signed on the release machine and published to lumio-releases.
+# releases are signed on the release machine and published to lumio-iptv releases.
 permissions:
   contents: read
 

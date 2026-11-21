@@ -1,7 +1,7 @@
 name: Build Windows MSI
 
 # Manual: builds the Windows installer on a GitHub Windows runner and uploads it as an
-# artifact. Publishing (lumio-releases + latest.json) is done from the artifact, so this
+# artifact. Publishing (lumio-iptv release + latest.json) is done from the artifact, so this
 # workflow needs no secrets. The MSI is unsigned, the same as builds made on a PC.
 on:
   workflow_dispatch:

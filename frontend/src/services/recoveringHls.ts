@@ -24,6 +24,71 @@ type Options = {
   onFatal: (message: string) => void;
 };
 
+type StreamStatsRaw = { kbps?: number; videoCodec?: string };
+
+export type StreamStats = {
+  width: number;
+  height: number;
+  /** e.g. "H.264", "HEVC" */
+  codec?: string;
+  fps?: number;
+  kbps?: number;
+  /** Seconds of video buffered ahead of the playhead. */
+  bufferSec: number;
+};
+
+function codecName(c?: string): string | undefined {
+  if (!c) return undefined;
+  const v = c.toLowerCase();
+  if (v.startsWith("avc")) return "H.264";
+  if (v.startsWith("hvc") || v.startsWith("hev")) return "HEVC";
+  if (v.startsWith("av01")) return "AV1";
+  if (v.startsWith("vp09") || v.startsWith("vp9")) return "VP9";
+  return c.split(".")[0].toUpperCase();
+}
+
+const fpsState = new WeakMap<HTMLVideoElement, { frames: number; at: number; fps?: number }>();
+
+/** Current stream facts for a <video> driven by createRecoveringHls (null before the first frame). */
+export function readStreamStats(media: HTMLVideoElement | null | undefined): StreamStats | null {
+  if (!media || !media.videoWidth) return null;
+  const raw: StreamStatsRaw = (media as any).__lumioStats || {};
+  let bufferSec = 0;
+  const t = media.currentTime;
+  for (let i = 0; i < media.buffered.length; i++) {
+    if (media.buffered.start(i) <= t + 0.5 && media.buffered.end(i) > t) bufferSec = media.buffered.end(i) - t;
+  }
+  // fps from decoded frames between two reads (manifests rarely carry FRAME-RATE).
+  let fps: number | undefined;
+  const q = (media as any).getVideoPlaybackQuality?.();
+  if (q) {
+    const now = performance.now();
+    const prev = fpsState.get(media);
+    if (prev && now - prev.at > 900 && !media.paused) {
+      const f = ((q.totalVideoFrames - prev.frames) * 1000) / (now - prev.at);
+      if (f > 0 && f < 200) fps = Math.round(f);
+      fpsState.set(media, { frames: q.totalVideoFrames, at: now, fps: fps ?? prev.fps });
+    } else if (!prev) {
+      fpsState.set(media, { frames: q.totalVideoFrames, at: now });
+    }
+    fps = fps ?? fpsState.get(media)?.fps;
+  }
+  // Counted frames drop when the window is hidden or busy, so only report a value close
+  // to a real broadcast rate, snapped to it (23.976→24, 29.97→30, 59.94→60).
+  if (fps) {
+    const std = [24, 25, 30, 50, 60].find((r) => Math.abs(fps! - r) <= r * 0.08);
+    fps = std;
+  }
+  return {
+    width: media.videoWidth,
+    height: media.videoHeight,
+    codec: codecName(raw.videoCodec),
+    fps,
+    kbps: raw.kbps ? Math.round(raw.kbps) : undefined,
+    bufferSec: Math.max(0, bufferSec),
+  };
+}
+
 const NUDGE_AFTER_MS = 4000;
 const REBUILD_AFTER_MS = 10000;
 const MAX_REBUILDS = 4; // without 30s of clean playback in between
@@ -67,6 +132,13 @@ export function createRecoveringHls({ Hls, media, src, config, onManifestParsed,
     nudged = false;
   };
 
+  // Stream facts read by the info badges (see readStreamStats).
+  const stats = (): StreamStatsRaw => {
+    const m = media as any;
+    if (!m.__lumioStats) m.__lumioStats = {};
+    return m.__lumioStats;
+  };
+
   const build = () => {
     networkRetries = 0;
     hls = new Hls(config);
@@ -96,8 +168,24 @@ export function createRecoveringHls({ Hls, media, src, config, onManifestParsed,
         rebuild(data?.details || "Canlı yayın web oynatıcıda açılamadı.");
       }
     });
-    instance.on(Hls.Events.FRAG_LOADED, () => {
-      if (instance === hls) networkRetries = 0;
+    instance.on(Hls.Events.FRAG_LOADED, (_event: unknown, data: any) => {
+      if (instance !== hls) return;
+      networkRetries = 0;
+      // Real stream bitrate for the info badges: bytes of the segment over its duration
+      // (bandwidthEstimate is download speed, not what the stream carries).
+      const bytes = data?.frag?.stats?.loaded || data?.payload?.byteLength || 0;
+      const dur = data?.frag?.duration || 0;
+      if (bytes > 0 && dur > 0) {
+        const kbps = (bytes * 8) / dur / 1000;
+        const prev = stats().kbps;
+        stats().kbps = prev ? prev * 0.7 + kbps * 0.3 : kbps;
+      }
+    });
+    instance.on(Hls.Events.BUFFER_CODECS, (_event: unknown, data: any) => {
+      if (instance !== hls) return;
+      const v = data?.video || data?.audiovideo;
+      const codec = v?.codec || v?.levelCodec;
+      if (codec) stats().videoCodec = String(codec);
     });
     instance.on(Hls.Events.MANIFEST_PARSED, () => {
       if (!destroyed && instance === hls) onManifestParsed?.();

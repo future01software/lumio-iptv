@@ -440,6 +440,25 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
 });
 WebHlsVideo.displayName = "WebHlsVideo";
 
+/** Wall clock in the top-right corner while the controls are hidden (Settings → Clock). */
+function PlayerClock() {
+  const [time, setTime] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setTime(new Date()), 15000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <View pointerEvents="none" style={clockStyles.wrap} testID="player-clock">
+      <Text style={clockStyles.text}>{time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Text>
+    </View>
+  );
+}
+
+const clockStyles = StyleSheet.create({
+  wrap: { position: "absolute", top: 18, right: 22, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 25 },
+  text: { color: "#fff", fontSize: 18, fontWeight: "700", fontVariant: ["tabular-nums"], textShadowColor: "rgba(0,0,0,0.6)", textShadowRadius: 4 },
+});
+
 export default function Player() {
   const router = useRouter();
   const { url, title, kind, itemId, position, logo, seriesId } = useLocalSearchParams<{
@@ -454,6 +473,7 @@ export default function Player() {
   const resumeSetting = usePlayerSettings((s) => s.resume);
   const hwAccelSetting = usePlayerSettings((s) => s.hwAccel);
   const bufferSizeSetting = usePlayerSettings((s) => s.bufferSize);
+  const showClockSetting = usePlayerSettings((s) => s.showClock);
 
   const liveChannels = playlist?.channels || [];
   const currentIdx = kind === "live" ? liveChannels.findIndex((c) => c.id === itemId) : -1;
@@ -1373,6 +1393,8 @@ export default function Player() {
           </View>
         </View>
       </GestureDetector>
+
+      {showClockSetting && !showControls && <PlayerClock />}
 
       {!showControls && (
         <Pressable

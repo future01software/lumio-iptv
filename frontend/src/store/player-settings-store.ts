@@ -16,6 +16,8 @@ type State = {
   /** Desktop/web player volume 0..1 and mute, remembered across sessions. */
   volume: number;
   muted: boolean;
+  /** Show the wall clock in a corner of the player while watching. */
+  showClock: boolean;
 
   setAutoplay: (v: boolean) => void;
   setResume: (v: boolean) => void;
@@ -25,14 +27,15 @@ type State = {
   setEpgShift: (v: number) => void;
   setVolume: (v: number) => void;
   setMuted: (v: boolean) => void;
+  setShowClock: (v: boolean) => void;
   init: () => Promise<void>;
 };
 
 function persist(state: State) {
-  const { autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted } = state;
+  const { autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock } = state;
   AsyncStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted }),
+    JSON.stringify({ autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock }),
   ).catch(() => {});
 }
 
@@ -45,6 +48,7 @@ export const usePlayerSettings = create<State>((set, get) => ({
   epgShift: 0,
   volume: 1,
   muted: false,
+  showClock: false,
 
   setAutoplay: (v) => { set({ autoplay: v }); persist(get()); },
   setResume: (v) => { set({ resume: v }); persist(get()); },
@@ -63,6 +67,7 @@ export const usePlayerSettings = create<State>((set, get) => ({
     persist(get());
   },
   setMuted: (v) => { set({ muted: v }); persist(get()); },
+  setShowClock: (v) => { set({ showClock: v }); persist(get()); },
 
   init: async () => {
     try {
@@ -78,6 +83,7 @@ export const usePlayerSettings = create<State>((set, get) => ({
         epgShift: s.epgShift ?? 0,
         volume: typeof s.volume === "number" ? s.volume : 1,
         muted: s.muted ?? false,
+        showClock: s.showClock ?? false,
       });
     } catch {}
   },

@@ -9,7 +9,9 @@ BE="$ROOT/backend"
 OUT="$ROOT/release"
 VERSION="$(node -p "require('$FE/package.json').version")"
 APP_NAME="Lumio IPTV"
-STAGE="$OUT/stage"
+# Paket proje dışında, geçici klasörde kurulur: proje klasöründeki dosya eşitleme servisi
+# klasörlere Finder öznitelikleri ekliyor ve codesign bunları reddediyor.
+STAGE="$(mktemp -d -t lumio-stage)/stage"
 APP="$STAGE/$APP_NAME.app"
 DMG="$OUT/Lumio-IPTV-$VERSION.dmg"
 
@@ -32,7 +34,7 @@ fi
   --collect-submodules uvicorn --hidden-import logo_db run_backend.py)
 
 echo "==> .app paketi"
-rm -rf "$OUT"; mkdir -p "$STAGE"
+rm -rf "$OUT"; mkdir -p "$OUT" "$STAGE"
 cp -R "$FE/node_modules/electron/dist/Electron.app" "$APP"
 RES="$APP/Contents/Resources"
 rm -f "$RES/default_app.asar"
@@ -59,7 +61,9 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
 plutil -replace CFBundleVersion -string "$VERSION" "$PLIST"
 plutil -replace LSApplicationCategoryType -string "public.app-category.entertainment" "$PLIST"
 
-# Ad-hoc imza (Apple Developer hesabı olmadan)
+# Ad-hoc imza (Apple Developer hesabı olmadan). Önce Finder/indirme etiketleri gibi
+# genişletilmiş öznitelikler temizlenir; varsa codesign "detritus not allowed" der.
+xattr -cr "$APP"
 codesign --force --deep -s - "$APP"
 codesign --verify --deep "$APP"
 
@@ -68,12 +72,12 @@ ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
 
-# latest.json'a eklenecek "mac" girdisi (lumio-releases v$VERSION sürümüne DMG ile birlikte yüklenir)
+# latest.json'a eklenecek "mac" girdisi (lumio-iptv v$VERSION sürümüne DMG ile birlikte yüklenir)
 SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
 SIZE="$(stat -f%z "$DMG")"
 cat > "$OUT/mac-asset.json" <<EOF
 {
-  "url": "https://github.com/future01software/lumio-releases/releases/download/v$VERSION/Lumio-IPTV-$VERSION.dmg",
+  "url": "https://github.com/future01software/lumio-iptv/releases/download/v$VERSION/Lumio-IPTV-$VERSION.dmg",
   "sha256": "$SHA",
   "size": $SIZE
 }

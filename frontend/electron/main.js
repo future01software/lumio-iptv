@@ -294,8 +294,8 @@ ipcMain.handle('cache-delete', async (_event, key) => {
 // The manifest and the MSI come from a public binaries-only repo. The renderer
 // never passes URLs or paths: main fetches the manifest itself, downloads the
 // MSI it names, checks its SHA-256, and only ever installs that file.
-const UPDATE_MANIFEST_URL = 'https://github.com/future01software/lumio-releases/releases/latest/download/latest.json';
-const UPDATE_URL_PREFIX = 'https://github.com/future01software/lumio-releases/releases/download/';
+const UPDATE_MANIFEST_URL = 'https://github.com/future01software/lumio-iptv/releases/latest/download/latest.json';
+const UPDATE_URL_PREFIX = 'https://github.com/future01software/lumio-iptv/releases/download/';
 let updateManifest = null;
 let downloadedUpdate = null;
 

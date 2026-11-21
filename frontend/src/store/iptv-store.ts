@@ -137,6 +137,8 @@ type State = {
   applyAdultFilter: (hide: boolean) => Promise<void>;
   clearPlaylist: () => Promise<void>;
   pushRecent: (channelId: string) => Promise<void>;
+  removeRecent: (channelId: string) => Promise<void>;
+  removeHistory: (itemId: string) => Promise<void>;
   toggleFavorite: (item: FavoriteItem) => Promise<void>;
   upsertHistory: (item: HistoryItem) => Promise<void>;
   loadEPG: () => Promise<void>;
@@ -414,6 +416,21 @@ setActive: async (cfg, parsed) => {
     const next = [channelId, ...get().recentChannels.filter((c) => c !== channelId)].slice(0, 20);
     await AsyncStorage.setItem(profileKey(STORAGE_KEYS.recentChannels, get().activeProfileId), JSON.stringify(next));
     set({ recentChannels: next });
+  },
+
+  removeRecent: async (channelId) => {
+    const next = get().recentChannels.filter((c) => c !== channelId);
+    await AsyncStorage.setItem(profileKey(STORAGE_KEYS.recentChannels, get().activeProfileId), JSON.stringify(next));
+    set({ recentChannels: next });
+  },
+
+  // Removes an item (for a series: every episode of it) from Continue Watching.
+  removeHistory: async (itemId) => {
+    const target = get().history.find((h) => h.item_id === itemId);
+    const seriesId = (target as any)?.series_id;
+    const next = get().history.filter((h) => h.item_id !== itemId && !(seriesId && (h as any).series_id === seriesId));
+    await AsyncStorage.setItem(profileKey(STORAGE_KEYS.history, get().activeProfileId), JSON.stringify(next));
+    set({ history: next });
   },
 
   toggleFavorite: async (item) => {
