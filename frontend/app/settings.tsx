@@ -56,7 +56,7 @@ const ACCENTS = [
 const PLAYBACK_MODES: { value: BufferSize; label: string; hint: string }[] = [
   { value: "small", label: "Hızlı açılış", hint: "Kanal hemen açılır; zayıf bağlantıda takılabilir." },
   { value: "normal", label: "Dengeli", hint: "Çoğu bağlantı için önerilen." },
-  { value: "large", label: "Kesintisiz", hint: "Biraz geç açılır, donmaya en dayanıklı. Yavaş sağlayıcılar için." },
+  { value: "large", label: "Kesintisiz", hint: "Canlı yayını ~45 sn geriden oynatır; sağlayıcı arada takılsa da görüntü donmaz." },
 ];
 const ASPECTS: { value: AspectMode; label: string }[] = [
   { value: "contain", label: "Otomatik (sığdır)" },

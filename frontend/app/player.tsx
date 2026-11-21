@@ -162,7 +162,10 @@ type WebVideoHandle = {
 const HLS_BUFFER_PRESETS = {
   small: { backBufferLength: 12, maxBufferLength: 45, maxMaxBufferLength: 60, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 7 },
   normal: { backBufferLength: 30, maxBufferLength: 90, maxMaxBufferLength: 120, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10 },
-  large: { backBufferLength: 60, maxBufferLength: 150, maxMaxBufferLength: 180, maxBufferSize: 120 * 1000 * 1000, liveSyncDurationCount: 4, liveMaxLatencyDurationCount: 15 },
+  // "Kesintisiz": play ~45 s behind the live edge. Some providers publish nothing for
+  // 12-15 s at a time (measured on a real account); starting this far back keeps that
+  // much video in hand. Seconds, not segment counts (hls.js rejects mixing the two).
+  large: { backBufferLength: 60, maxBufferLength: 150, maxMaxBufferLength: 180, maxBufferSize: 120 * 1000 * 1000, liveSyncDuration: 45, liveMaxLatencyDuration: 120 },
 } as const;
 
 // Native (ExoPlayer via expo-video) buffering, modelled on NuvioTV's defaults:
