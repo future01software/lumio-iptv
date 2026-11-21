@@ -27,6 +27,7 @@ import { useReminders, reminderId } from "@/src/store/reminders-store";
 import { prettyGroup } from "@/src/components/PhoneCategoryBar";
 
 const ALL = "all";
+const NO_CHANNELS: Channel[] = [];
 const FAVS = "favs";
 
 const PIXELS_PER_MINUTE = 6;
@@ -235,10 +236,14 @@ export default function LiveTVDesktop() {
 
   // EPG Grid Calculations
   const [now, setNow] = useState(Date.now());
+  // Only tick while this screen is visible: behind the full-screen player every tick
+  // re-rendered the whole guide.
   useEffect(() => {
+    if (!isFocused) return;
+    setNow(Date.now());
     const int = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(int);
-  }, []);
+  }, [isFocused]);
 
   // Day picker: 0 = today (window starts HOURS_BACK before now), other days start at
   // midnight on the web (24h window) or at the same clock time on TV (short window).
@@ -304,13 +309,31 @@ export default function LiveTVDesktop() {
   // each programmatic scroll bounced back and forth on every frame.
   const scrollDriver = useRef<"left" | "right" | null>(null);
   const driverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listY = useRef(0);
   const syncScroll = (from: "left" | "right", y: number) => {
+    if (isFocused) listY.current = y;
     if (scrollDriver.current && scrollDriver.current !== from) return;
     scrollDriver.current = from;
     if (driverTimer.current) clearTimeout(driverTimer.current);
     driverTimer.current = setTimeout(() => { scrollDriver.current = null; }, 150);
     (from === "left" ? rightListRef : leftListRef).current?.scrollToOffset({ offset: y, animated: false });
   };
+
+  // While another screen (the full-screen player) covers this one, the lists get no size,
+  // and a FlashList with no size draws every row: ~10,000 channels and their guide rows
+  // (135k DOM nodes), re-rendered on each tick. That froze the app for seconds at a time
+  // and starved the player's buffer. Give the lists no rows while hidden and put the
+  // scroll position back when the screen returns.
+  const guideData = isFocused ? channels : NO_CHANNELS;
+  useEffect(() => {
+    if (!isFocused) return;
+    const t = setTimeout(() => {
+      leftListRef.current?.scrollToOffset({ offset: listY.current, animated: false });
+      rightListRef.current?.scrollToOffset({ offset: listY.current, animated: false });
+      scrollGridTo(gridScrollX.current, false);
+    }, 50);
+    return () => clearTimeout(t);
+  }, [isFocused, scrollGridTo]);
 
   const previewEpg = previewChannel ? (epgByChannel[previewChannel.epg_channel_id || ""] || []) : [];
   const previewCurrentProg = previewEpg.find((p: any) => new Date(p.start).getTime() <= now && new Date(p.stop).getTime() > now);
@@ -527,7 +550,7 @@ export default function LiveTVDesktop() {
             </View>
             <FlashList
               ref={leftListRef}
-              data={channels}
+              data={guideData}
               keyExtractor={(c) => c.id}
               showsVerticalScrollIndicator={false}
               scrollEventThrottle={16}
@@ -597,7 +620,7 @@ export default function LiveTVDesktop() {
             <View style={{ width: TOTAL_WIDTH, flex: 1 }}>
             <FlashList
               ref={rightListRef}
-              data={channels}
+              data={guideData}
               keyExtractor={(c) => c.id}
               showsVerticalScrollIndicator={true}
               scrollEventThrottle={16}
