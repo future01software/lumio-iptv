@@ -91,9 +91,13 @@ if (existing) {
   // Release already published for macOS: add the installers, replace latest.json.
   execFileSync("gh", ["release", "upload", tag, "-R", REPO, "--clobber", ...files], { stdio: "inherit" });
 } else {
-  execFileSync("gh", ["release", "create", tag, "-R", REPO, "--title", `Lumio IPTV ${version}`, "--notes", notes || `Lumio IPTV ${version}`, ...files], {
+  // Create as a draft and publish only once every file is attached: a published release
+  // is "latest" at once, and apps polling latest/download/latest.json would get a 404
+  // until latest.json finishes uploading.
+  execFileSync("gh", ["release", "create", tag, "-R", REPO, "--draft", "--title", `Lumio IPTV ${version}`, "--notes", notes || `Lumio IPTV ${version}`, ...files], {
     stdio: "inherit",
   });
+  execFileSync("gh", ["release", "edit", tag, "-R", REPO, "--draft=false", "--latest"], { stdio: "inherit" });
 }
 console.log(`Published https://github.com/${REPO}/releases/tag/v${version}`);
 
