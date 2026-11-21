@@ -139,6 +139,8 @@ type State = {
   pushRecent: (channelId: string) => Promise<void>;
   removeRecent: (channelId: string) => Promise<void>;
   removeHistory: (itemId: string) => Promise<void>;
+  /** Settings > Advanced: drop the cached guide and re-fetch the list and guide from the source. */
+  clearCaches: () => Promise<void>;
   toggleFavorite: (item: FavoriteItem) => Promise<void>;
   upsertHistory: (item: HistoryItem) => Promise<void>;
   loadEPG: () => Promise<void>;
@@ -431,6 +433,13 @@ setActive: async (cfg, parsed) => {
     const next = get().history.filter((h) => h.item_id !== itemId && !(seriesId && (h as any).series_id === seriesId));
     await AsyncStorage.setItem(profileKey(STORAGE_KEYS.history, get().activeProfileId), JSON.stringify(next));
     set({ history: next });
+  },
+
+  clearCaches: async () => {
+    await deleteCachedFile(EPG_FILE);
+    set({ epgByChannel: {} });
+    await get().refreshPlaylistInBackground();
+    await get().loadEPG();
   },
 
   toggleFavorite: async (item) => {

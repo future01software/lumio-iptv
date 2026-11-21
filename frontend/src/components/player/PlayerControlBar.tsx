@@ -5,7 +5,8 @@ import Slider from "@react-native-community/slider";
 
 import { PlayerIconButton } from "./PlayerIconButton";
 import { PlayerMoreMenu, MoreMenuAction } from "./PlayerMoreMenu";
-import { BOTTOM_GRADIENT, BOTTOM_GRADIENT_TV } from "./styles";
+import { BOTTOM_GRADIENT, BOTTOM_GRADIENT_TV, shadeGradient } from "./styles";
+import { usePlayerSettings } from "@/src/store/player-settings-store";
 import { spacing, font } from "@/src/theme/tokens";
 import { useResponsive } from "@/src/hooks/use-responsive";
 
@@ -89,7 +90,7 @@ export function PlayerControlBar({
   );
   return (
     <LinearGradient
-      colors={(isTV ? BOTTOM_GRADIENT_TV : BOTTOM_GRADIENT) as any}
+      colors={shadeGradient(isTV ? BOTTOM_GRADIENT_TV : BOTTOM_GRADIENT, usePlayerSettings.getState().osdShade) as any}
       style={[styles.root, isTV && styles.rootTV]}
       pointerEvents="box-none"
     >

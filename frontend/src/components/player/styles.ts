@@ -26,6 +26,12 @@ export const glassPanel = {
 // Gradient fade used behind the top/bottom bars instead of a solid overlay,
 // so more of the video stays visible when controls are shown.
 export const TOP_GRADIENT = ["rgba(0,0,0,0.55)", "rgba(0,0,0,0)"] as const;
+
+/** Settings > Player > Bar shade: scales the black of the bar gradients. */
+export function shadeGradient(colors: readonly string[], shade: "light" | "normal" | "dark"): string[] {
+  const k = shade === "light" ? 0.45 : shade === "dark" ? 1.5 : 1;
+  return colors.map((c) => c.replace(/rgba\((\d+),(\d+),(\d+),([\d.]+)\)/, (_m, r, g, b, a) => `rgba(${r},${g},${b},${Math.min(0.95, Number(a) * k).toFixed(2)})`));
+}
 export const BOTTOM_GRADIENT = ["rgba(0,0,0,0)", "rgba(0,0,0,0.6)"] as const;
 // TV: darker and taller, so seek bar, transport and the action row read as one panel
 // even when a widescreen film's letterbox puts half of them on black.

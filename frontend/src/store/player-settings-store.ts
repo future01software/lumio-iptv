@@ -3,6 +3,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useIPTV } from "@/src/store/iptv-store";
 
 export type BufferSize = "small" | "normal" | "large";
+/** Player picture fit on open (same values as the in-player toggle). */
+export type AspectMode = "contain" | "zoom" | "cover" | "fill";
+/** How dark the gradient behind the player's top/bottom bars is. */
+export type OsdShade = "light" | "normal" | "dark";
+/** Screen the app opens on once a playlist is loaded. */
+export type StartScreen = "home" | "live" | "last";
 
 const STORAGE_KEY = "iptv.settings";
 
@@ -18,6 +24,13 @@ type State = {
   muted: boolean;
   /** Show the wall clock in a corner of the player while watching. */
   showClock: boolean;
+  /** Small channel + playlist name label while the controls are hidden. */
+  showInfoLabel: boolean;
+  defaultAspect: AspectMode;
+  osdShade: OsdShade;
+  startScreen: StartScreen;
+  /** Live TV guide: hide channels without a schedule (remembered). */
+  hideNoGuide: boolean;
 
   setAutoplay: (v: boolean) => void;
   setResume: (v: boolean) => void;
@@ -28,14 +41,19 @@ type State = {
   setVolume: (v: number) => void;
   setMuted: (v: boolean) => void;
   setShowClock: (v: boolean) => void;
+  setShowInfoLabel: (v: boolean) => void;
+  setDefaultAspect: (v: AspectMode) => void;
+  setOsdShade: (v: OsdShade) => void;
+  setStartScreen: (v: StartScreen) => void;
+  setHideNoGuide: (v: boolean) => void;
   init: () => Promise<void>;
 };
 
 function persist(state: State) {
-  const { autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock } = state;
+  const { autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock, showInfoLabel, defaultAspect, osdShade, startScreen, hideNoGuide } = state;
   AsyncStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock }),
+    JSON.stringify({ autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock, showInfoLabel, defaultAspect, osdShade, startScreen, hideNoGuide }),
   ).catch(() => {});
 }
 
@@ -49,6 +67,11 @@ export const usePlayerSettings = create<State>((set, get) => ({
   volume: 1,
   muted: false,
   showClock: false,
+  showInfoLabel: false,
+  defaultAspect: "contain",
+  osdShade: "normal",
+  startScreen: "home",
+  hideNoGuide: false,
 
   setAutoplay: (v) => { set({ autoplay: v }); persist(get()); },
   setResume: (v) => { set({ resume: v }); persist(get()); },
@@ -68,6 +91,11 @@ export const usePlayerSettings = create<State>((set, get) => ({
   },
   setMuted: (v) => { set({ muted: v }); persist(get()); },
   setShowClock: (v) => { set({ showClock: v }); persist(get()); },
+  setShowInfoLabel: (v) => { set({ showInfoLabel: v }); persist(get()); },
+  setDefaultAspect: (v) => { set({ defaultAspect: v }); persist(get()); },
+  setOsdShade: (v) => { set({ osdShade: v }); persist(get()); },
+  setStartScreen: (v) => { set({ startScreen: v }); persist(get()); },
+  setHideNoGuide: (v) => { set({ hideNoGuide: v }); persist(get()); },
 
   init: async () => {
     try {
@@ -84,6 +112,11 @@ export const usePlayerSettings = create<State>((set, get) => ({
         volume: typeof s.volume === "number" ? s.volume : 1,
         muted: s.muted ?? false,
         showClock: s.showClock ?? false,
+        showInfoLabel: s.showInfoLabel ?? false,
+        defaultAspect: s.defaultAspect ?? "contain",
+        osdShade: s.osdShade ?? "normal",
+        startScreen: s.startScreen ?? "home",
+        hideNoGuide: s.hideNoGuide ?? false,
       });
     } catch {}
   },

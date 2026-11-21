@@ -4,7 +4,8 @@ import { LinearGradient } from "expo-linear-gradient";
 
 import { CastButton, AirPlayButton } from "@/src/components/CastButton";
 import { PlayerIconButton } from "./PlayerIconButton";
-import { TOP_GRADIENT } from "./styles";
+import { TOP_GRADIENT, shadeGradient } from "./styles";
+import { usePlayerSettings } from "@/src/store/player-settings-store";
 import { spacing, font } from "@/src/theme/tokens";
 import { kindLabel } from "@/src/utils/kind-label";
 import { useResponsive } from "@/src/hooks/use-responsive";
@@ -44,7 +45,7 @@ export function PlayerTopBar({
 }: Props) {
   const { isTV } = useResponsive();
   return (
-    <LinearGradient colors={TOP_GRADIENT as any} style={[styles.root, isTV && styles.rootTV]} pointerEvents="box-none">
+    <LinearGradient colors={shadeGradient(TOP_GRADIENT, usePlayerSettings.getState().osdShade) as any} style={[styles.root, isTV && styles.rootTV]} pointerEvents="box-none">
       <PlayerIconButton icon="chevron-down" size={26} onPress={onBack} testID="player-back" accentColor={accentColor} onInteract={onInteract} />
       <View style={styles.titleBlock}>
         <Text style={styles.title} numberOfLines={1}>{title}</Text>

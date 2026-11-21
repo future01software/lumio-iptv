@@ -440,6 +440,26 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
 });
 WebHlsVideo.displayName = "WebHlsVideo";
 
+/**
+ * Channel + playlist name in the top-left (Settings > Player). Unlike the clock it fades
+ * out after a few seconds; it comes back on a channel switch or when the controls close.
+ */
+function PlayerInfoLabel({ title, subtitle }: { title: string; subtitle?: string }) {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const id = setTimeout(() => setVisible(false), INFO_LABEL_MS);
+    return () => clearTimeout(id);
+  }, []);
+  if (!visible || !title) return null;
+  return (
+    <View pointerEvents="none" style={clockStyles.infoWrap} testID="player-info-label">
+      <Text style={clockStyles.infoTitle} numberOfLines={1}>{title}</Text>
+      {!!subtitle && <Text style={clockStyles.infoSub} numberOfLines={1}>{subtitle}</Text>}
+    </View>
+  );
+}
+const INFO_LABEL_MS = 5000;
+
 /** Wall clock in the top-right corner while the controls are hidden (Settings → Clock). */
 function PlayerClock() {
   const [time, setTime] = useState(() => new Date());
@@ -457,6 +477,9 @@ function PlayerClock() {
 const clockStyles = StyleSheet.create({
   wrap: { position: "absolute", top: 18, right: 22, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 25 },
   text: { color: "#fff", fontSize: 18, fontWeight: "700", fontVariant: ["tabular-nums"], textShadowColor: "rgba(0,0,0,0.6)", textShadowRadius: 4 },
+  infoWrap: { position: "absolute", top: 18, left: 22, maxWidth: "50%", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 25 },
+  infoTitle: { color: "#fff", fontSize: 15, fontWeight: "800", textShadowColor: "rgba(0,0,0,0.6)", textShadowRadius: 4 },
+  infoSub: { color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: "600", marginTop: 1 },
 });
 
 export default function Player() {
@@ -474,6 +497,8 @@ export default function Player() {
   const hwAccelSetting = usePlayerSettings((s) => s.hwAccel);
   const bufferSizeSetting = usePlayerSettings((s) => s.bufferSize);
   const showClockSetting = usePlayerSettings((s) => s.showClock);
+  const showInfoLabelSetting = usePlayerSettings((s) => s.showInfoLabel);
+  const playlistName = useIPTV((s) => (s.config as any)?.name || "");
 
   const liveChannels = playlist?.channels || [];
   const currentIdx = kind === "live" ? liveChannels.findIndex((c) => c.id === itemId) : -1;
@@ -767,7 +792,7 @@ export default function Player() {
     },
   );
 
-  const [resizeMode, setResizeMode] = useState<ResizeMode>("contain");
+  const [resizeMode, setResizeMode] = useState<ResizeMode>(() => usePlayerSettings.getState().defaultAspect);
   function toggleResizeMode() {
     scheduleHide();
     setResizeMode(prev => {
@@ -1395,6 +1420,14 @@ export default function Player() {
       </GestureDetector>
 
       {showClockSetting && !showControls && <PlayerClock />}
+      {showInfoLabelSetting && !showControls && (
+        // Keyed by title: a channel switch remounts it, so the name shows again.
+        <PlayerInfoLabel
+          key={String(title || "")}
+          title={isLive ? cleanChannelName(String(title || "")) : String(title || "")}
+          subtitle={playlistName}
+        />
+      )}
 
       {!showControls && (
         <Pressable

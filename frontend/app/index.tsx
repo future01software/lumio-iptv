@@ -4,6 +4,7 @@ import { useNavigationContainerRef, useRouter } from "expo-router";
 import { useIPTV, waitForBackend } from "@/src/store/iptv-store";
 import { colors } from "@/src/theme/tokens";
 import { useTheme } from "@/src/store/theme-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function Index() {
   const { accentColor } = useTheme();
@@ -25,17 +26,42 @@ export default function Index() {
       reloading.current = true;
       waitForBackend()
         .then(() => loadPlaylist(config))
-        .then((ok) => replaceWhenReady(ok ? "/(tabs)" : "/login"));
+        .then((ok) => (ok ? openStartScreen() : replaceWhenReady("/login")));
       return;
     }
-    return replaceWhenReady(config && playlist ? "/(tabs)" : "/login");
+    if (config && playlist) {
+      openStartScreen();
+      return;
+    }
+    return replaceWhenReady("/login");
   }, [config, playlist, deviceId, router, loadPlaylist]);
 
   // Android: leaving with BACK destroys the activity but keeps the process and the
   // store. On the next launch config/playlist are already there on the first render,
   // so replace() ran before the new root navigator was ready and threw — the app
   // crashed and only opened on the second press. Retry until the navigator is ready.
-  function replaceWhenReady(href: "/(tabs)" | "/login") {
+  // Settings > Live TV > Opening screen. Read straight from storage: the settings store
+  // may still be loading on this first render.
+  async function openStartScreen() {
+    let start = "home";
+    try { start = JSON.parse((await AsyncStorage.getItem("iptv.settings")) || "{}").startScreen || "home"; } catch {}
+    if (start === "live") return replaceWhenReady("/(tabs)/live");
+    replaceWhenReady("/(tabs)");
+    if (start === "last") {
+      const st = useIPTV.getState();
+      const id = st.recentChannels[0];
+      const ch = id ? st.playlist?.channels.find((c) => c.id === id) : undefined;
+      if (ch) {
+        const open = () => {
+          if (navigationRef.isReady()) router.push({ pathname: "/player", params: { url: ch.url, title: ch.name, kind: "live", itemId: ch.id, logo: ch.logo || "" } });
+          else setTimeout(open, 50);
+        };
+        setTimeout(open, 300);
+      }
+    }
+  }
+
+  function replaceWhenReady(href: "/(tabs)" | "/(tabs)/live" | "/login") {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const attempt = () => {
       if (navigationRef.isReady()) router.replace(href);

@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import * as Device from "expo-device";
+import * as SecureStore from "expo-secure-store";
 
 /**
  * "Light mode" for low-end Android devices (typically 1-2 GB TV boxes with Cortex-A35/A53
@@ -10,8 +11,37 @@ import * as Device from "expo-device";
  */
 const LOW_RAM_BYTES = 3 * 1024 * 1024 * 1024;
 
-export const LOW_END: boolean =
+/** What the device would get without a user choice. */
+export const AUTO_LOW_END: boolean =
   Platform.OS === "android" && !!Device.totalMemory && Device.totalMemory < LOW_RAM_BYTES;
+
+/**
+ * Settings > Advanced > Performance mode. Read synchronously at startup because LOW_END
+ * is used at module load (e.g. which Pressable a card uses), so a change applies after a
+ * restart. Web/Electron: localStorage; native: SecureStore's sync getItem.
+ */
+export type PerfMode = "auto" | "light" | "full";
+const PERF_KEY = "lumio_perf_mode";
+
+function readPerfMode(): PerfMode {
+  try {
+    const v = Platform.OS === "web" ? globalThis.localStorage?.getItem(PERF_KEY) : SecureStore.getItem(PERF_KEY);
+    return v === "light" || v === "full" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+export const PERF_MODE: PerfMode = readPerfMode();
+
+export async function savePerfMode(mode: PerfMode): Promise<void> {
+  try {
+    if (Platform.OS === "web") globalThis.localStorage?.setItem(PERF_KEY, mode);
+    else await SecureStore.setItemAsync(PERF_KEY, mode);
+  } catch {}
+}
+
+export const LOW_END: boolean = PERF_MODE === "light" ? true : PERF_MODE === "full" ? false : AUTO_LOW_END;
 
 /** Focus zoom for cards/buttons: off in light mode (the focus ring still shows focus). */
 export function focusScale(scale: number): number {

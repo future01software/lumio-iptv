@@ -9,7 +9,8 @@ import { useAccount } from "@/src/store/account-store";
 import { useAppLock } from "@/src/store/app-lock-store";
 import { useI18n, LOCALE_INFO, type Locale } from "@/src/store/i18n-store";
 import { useTheme } from "@/src/store/theme-store";
-import { usePlayerSettings } from "@/src/store/player-settings-store";
+import { usePlayerSettings, type AspectMode, type OsdShade, type StartScreen, type BufferSize } from "@/src/store/player-settings-store";
+import { PERF_MODE, savePerfMode, type PerfMode } from "@/src/utils/perf";
 import { useResponsive } from "@/src/hooks/use-responsive";
 import { useProfiles } from "@/src/store/profile-store";
 import { useDownloads } from "@/src/store/downloads-store";
@@ -21,7 +22,7 @@ import { UPDATES_SUPPORTED, currentVersion } from "@/src/services/updater";
 import { errorText } from "@/src/utils/error-text";
 import { createBackup, decryptBackup, encryptBackup, parseBackup, pickBackupFile, restoreBackup, saveBackupFile, type BackupFile, type EncryptedBackupFile } from "@/src/utils/backup";
 
-type Category = "account" | "library" | "general" | "advanced" | "about";
+type Category = "account" | "library" | "appearance" | "player" | "live" | "parental" | "advanced" | "about";
 
 // Order matches Nuvio's real SettingsCategory enum: Account, General, About, Advanced.
 // Desktop (Electron) and plain web: hide native-only settings (see below).
@@ -30,27 +31,162 @@ const IS_WEB = Platform.OS === "web";
 const CATEGORIES: { id: Category; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: "account", label: "Hesap", icon: "person-circle-outline" },
   { id: "library", label: "Kütüphane", icon: "library-outline" },
-  { id: "general", label: "Genel", icon: "settings-outline" },
-  { id: "about", label: "Hakkında", icon: "information-circle-outline" },
+  { id: "appearance", label: "Görünüm", icon: "color-palette-outline" },
+  { id: "player", label: "Oynatıcı", icon: "play-circle-outline" },
+  { id: "live", label: "Canlı TV ve Rehber", icon: "tv-outline" },
+  { id: "parental", label: "Ebeveyn ve Güvenlik", icon: "shield-checkmark-outline" },
   { id: "advanced", label: "Gelişmiş", icon: "options-outline" },
+  { id: "about", label: "Hakkında", icon: "information-circle-outline" },
 ];
 
-function AccentColorRow({ c, idx, arr, accentColor, setAccentColor }: any) {
-  const [focused, setFocused] = React.useState(false);
+const ACCENTS = [
+  { id: "#E50914", label: "Kırmızı (Lumio)" },
+  { id: "#1DB954", label: "Yeşil" },
+  { id: "#0A84FF", label: "Mavi" },
+  { id: "#FFD60A", label: "Altın" },
+  { id: "#B026FF", label: "Mor" },
+  { id: "#FF9F0A", label: "Turuncu" },
+  { id: "#FF375F", label: "Pembe" },
+  { id: "#30D5C8", label: "Turkuaz" },
+  { id: "#5E5CE6", label: "Çivit" },
+  { id: "#A4133C", label: "Bordo" },
+  { id: "#A3E635", label: "Limon" },
+];
+
+const PLAYBACK_MODES: { value: BufferSize; label: string; hint: string }[] = [
+  { value: "small", label: "Hızlı açılış", hint: "Kanal hemen açılır; zayıf bağlantıda takılabilir." },
+  { value: "normal", label: "Dengeli", hint: "Çoğu bağlantı için önerilen." },
+  { value: "large", label: "Kesintisiz", hint: "Biraz geç açılır, donmaya en dayanıklı. Yavaş sağlayıcılar için." },
+];
+const ASPECTS: { value: AspectMode; label: string }[] = [
+  { value: "contain", label: "Otomatik (sığdır)" },
+  { value: "zoom", label: "Yakınlaştır (siyah bantları kırp)" },
+  { value: "cover", label: "Ekranı kapla" },
+  { value: "fill", label: "Ekrana yay" },
+];
+const SHADES: { value: OsdShade; label: string }[] = [
+  { value: "light", label: "Açık" },
+  { value: "normal", label: "Normal" },
+  { value: "dark", label: "Koyu" },
+];
+const START_SCREENS: { value: StartScreen; label: string }[] = [
+  { value: "home", label: "Ana sayfa" },
+  { value: "live", label: "Canlı TV" },
+  { value: "last", label: "Son izlenen kanal" },
+];
+const PERF_MODES: { value: PerfMode; label: string; hint: string }[] = [
+  { value: "auto", label: "Otomatik", hint: "Cihaza göre seçilir (zayıf TV kutularında Hafif)." },
+  { value: "light", label: "Hafif", hint: "Animasyonlar ve önizlemeler kısılır; eski TV kutuları için." },
+  { value: "full", label: "Tam", hint: "Bütün efektler açık." },
+];
+
+/** Accent color as a row of swatches (it used to be an 11-row list). */
+function AccentSwatches({ accentColor, setAccentColor }: { accentColor: string; setAccentColor: (c: string) => void }) {
+  const current = ACCENTS.find((c) => c.id.toLowerCase() === accentColor.toLowerCase());
   return (
-    <Pressable
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      style={[styles.row, idx === arr.length - 1 && { borderBottomWidth: 0 }, focused && { backgroundColor: accentColor }]}
-      onPress={() => setAccentColor(c.id)}
-      focusable={true}
-    >
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: c.id, borderWidth: focused ? 2 : 0, borderColor: "#FFF" }} />
-        <Text style={[styles.rowLabel, focused && { color: "#FFF", fontWeight: "700" }]}>{c.label}</Text>
+    <View style={{ padding: spacing.lg, gap: spacing.md }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
+        {ACCENTS.map((c) => {
+          const on = c.id.toLowerCase() === accentColor.toLowerCase();
+          return (
+            <Pressable
+              key={c.id}
+              onPress={() => setAccentColor(c.id)}
+              accessibilityLabel={c.label}
+              focusable={true}
+              style={({ focused, hovered }: any) => [
+                { width: 40, height: 40, borderRadius: 20, backgroundColor: c.id, alignItems: "center", justifyContent: "center", borderWidth: 3, borderColor: "transparent" },
+                (on || focused || hovered) && { borderColor: "#fff" },
+              ]}
+              testID={`accent-${c.id.slice(1)}`}
+            >
+              {on && <Ionicons name="checkmark" size={20} color="#fff" />}
+            </Pressable>
+          );
+        })}
       </View>
-      {accentColor === c.id && <Text style={[styles.rowValue, { color: focused ? "#FFF" : accentColor, fontWeight: "800" }]}>✓</Text>}
+      <Text style={{ color: colors.textMuted, fontSize: font.sm }}>{current?.label || accentColor}</Text>
+    </View>
+  );
+}
+
+/**
+ * A setting with a fixed set of choices: shows the current one, and opens the full list
+ * in place (rows used to cycle to the next value on every press, hiding the options).
+ */
+function OptionRow<T extends string | number>({ label, icon, value, options, onChange, accentColor, testID, note }: {
+  label: string; icon?: keyof typeof Ionicons.glyphMap; value: T;
+  options: { value: T; label: string; hint?: string }[]; onChange: (v: T) => void;
+  accentColor: string; testID?: string; note?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const current = options.find((o) => o.value === value);
+  return (
+    <View>
+      <Pressable
+        onPress={() => setOpen((v) => !v)}
+        focusable={true}
+        style={({ focused }: any) => [styles.row, focused && { backgroundColor: accentColor }]}
+        testID={testID}
+      >
+        <RowIcon icon={icon} accentColor={accentColor} />
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={styles.rowValue} numberOfLines={1}>{current?.label ?? String(value)}</Text>
+        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={16} color={colors.textMuted} />
+      </Pressable>
+      {open && (
+        <View style={{ backgroundColor: "rgba(255,255,255,0.03)", borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+          {options.map((o) => {
+            const on = o.value === value;
+            return (
+              <Pressable
+                key={String(o.value)}
+                onPress={() => { onChange(o.value); setOpen(false); }}
+                focusable={true}
+                style={({ focused, hovered }: any) => [
+                  { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: 11, paddingLeft: spacing.lg + 44, paddingRight: spacing.lg },
+                  (focused || hovered) && { backgroundColor: "rgba(255,255,255,0.06)" },
+                ]}
+                testID={testID ? `${testID}-${o.value}` : undefined}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: on ? accentColor : colors.onSurface, fontSize: font.base, fontWeight: on ? "800" : "500" }}>{o.label}</Text>
+                  {!!o.hint && <Text style={{ color: colors.textMuted, fontSize: font.sm, marginTop: 2 }}>{o.hint}</Text>}
+                </View>
+                {on && <Ionicons name="checkmark" size={18} color={accentColor} />}
+              </Pressable>
+            );
+          })}
+          {!!note && <Text style={[styles.note, { paddingHorizontal: spacing.lg, paddingBottom: spacing.md }]}>{note}</Text>}
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** Hour offset for the guide, with − / + instead of cycling through 25 values. */
+function StepperRow({ label, icon, value, format, onChange, min, max, accentColor }: {
+  label: string; icon?: keyof typeof Ionicons.glyphMap; value: number; format: (v: number) => string;
+  onChange: (v: number) => void; min: number; max: number; accentColor: string;
+}) {
+  const btn = (d: number, name: keyof typeof Ionicons.glyphMap, id: string) => (
+    <Pressable
+      onPress={() => onChange(Math.min(max, Math.max(min, value + d)))}
+      focusable={true}
+      style={({ focused, hovered }: any) => [{ width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.borderStrong }, (focused || hovered) && { borderColor: accentColor }]}
+      testID={id}
+    >
+      <Ionicons name={name} size={16} color={colors.onSurface} />
     </Pressable>
+  );
+  return (
+    <View style={styles.row}>
+      <RowIcon icon={icon} accentColor={accentColor} />
+      <Text style={styles.rowLabel}>{label}</Text>
+      {btn(-1, "remove", "epg-shift-minus")}
+      <Text style={[styles.rowValue, { minWidth: 64, textAlign: "center", color: colors.onSurface }]}>{format(value)}</Text>
+      {btn(1, "add", "epg-shift-plus")}
+    </View>
   );
 }
 
@@ -148,6 +284,19 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
   const setBufferSize = usePlayerSettings((s) => s.setBufferSize);
   const epgShift = usePlayerSettings((s) => s.epgShift);
   const setEpgShift = usePlayerSettings((s) => s.setEpgShift);
+  const showInfoLabel = usePlayerSettings((s) => s.showInfoLabel);
+  const setShowInfoLabel = usePlayerSettings((s) => s.setShowInfoLabel);
+  const defaultAspect = usePlayerSettings((s) => s.defaultAspect);
+  const setDefaultAspect = usePlayerSettings((s) => s.setDefaultAspect);
+  const osdShade = usePlayerSettings((s) => s.osdShade);
+  const setOsdShade = usePlayerSettings((s) => s.setOsdShade);
+  const startScreen = usePlayerSettings((s) => s.startScreen);
+  const setStartScreen = usePlayerSettings((s) => s.setStartScreen);
+  const hideNoGuide = usePlayerSettings((s) => s.hideNoGuide);
+  const setHideNoGuide = usePlayerSettings((s) => s.setHideNoGuide);
+  const clearCaches = useIPTV((s) => s.clearCaches);
+  const [perfMode, setPerfModeState] = React.useState<PerfMode>(PERF_MODE);
+  const [cacheState, setCacheState] = React.useState<"idle" | "busy" | "done">("idle");
   const appLock = useAppLock();
   const { locale, setLocale, t } = useI18n();
   const { accentColor, setAccentColor } = useTheme();
@@ -241,43 +390,68 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
     </>
   );
 
-  // Nuvio keeps its content-rating toggle ("Show Parental Guide") inside Playback, under
-  // General - matched here by keeping hide-adult/app-lock alongside playback, not off in
-  // their own "Advanced" bucket.
-  const generalSection = (
+  const appearanceSection = (
     <>
-      <Group title={t("settings.group.appearance")}>
-        <View>
-          <Text style={[styles.groupTitle, { marginTop: spacing.md }]}>{t("settings.accent")}</Text>
-          <View style={styles.group}>
-            {[
-              { id: "#E50914", label: "Kırmızı" },
-              { id: "#1DB954", label: "Yeşil" },
-              { id: "#0A84FF", label: "Mavi" },
-              { id: "#FFD60A", label: "Altın" },
-              { id: "#B026FF", label: "Mor" },
-              { id: "#FF9F0A", label: "Turuncu" },
-              { id: "#FF375F", label: "Pembe" },
-              { id: "#30D5C8", label: "Turkuaz" },
-              { id: "#5E5CE6", label: "Çivit" },
-              { id: "#A4133C", label: "Bordo" },
-              { id: "#A3E635", label: "Limon" }
-            ].map((c, idx, arr) => (
-              <AccentColorRow key={c.id} c={c} idx={idx} arr={arr} accentColor={accentColor} setAccentColor={setAccentColor} />
-            ))}
-          </View>
-        </View>
+      <Group title={t("settings.accent")}>
+        <AccentSwatches accentColor={accentColor} setAccentColor={setAccentColor} />
       </Group>
+      <Group title={t("settings.group.language")}>
+        {(Object.keys(LOCALE_INFO) as Locale[]).map((code, idx, arr) => {
+          const info = LOCALE_INFO[code];
+          return (
+            <LocaleRow key={code} code={code} info={info} locale={locale} setLocale={setLocale} accentColor={accentColor} idx={idx} arr={arr} />
+          );
+        })}
+      </Group>
+    </>
+  );
 
+  const playerSection = (
+    <>
       <Group title={t("settings.group.playback")}>
         <ToggleRow icon="play-circle-outline" label={t("settings.autoplay")} value={autoplay} onValueChange={setAutoplay} testID="set-autoplay" accentColor={accentColor} />
         <ToggleRow icon="play-skip-forward-outline" label={t("settings.resume")} value={resume} onValueChange={setResume} testID="set-resume" accentColor={accentColor} />
-        <ToggleRow icon="time-outline" label={t("settings.clock")} value={showClock} onValueChange={setShowClock} testID="set-clock" accentColor={accentColor} />
+        <OptionRow icon="speedometer-outline" label="Oynatma modu" value={bufferSize} options={PLAYBACK_MODES} onChange={setBufferSize} accentColor={accentColor} testID="set-playback-mode" />
+        <OptionRow icon="expand-outline" label="Varsayılan ekran oranı" value={defaultAspect} options={ASPECTS} onChange={setDefaultAspect} accentColor={accentColor} testID="set-aspect" />
         {!IS_WEB && (
           <ToggleRow icon="hardware-chip-outline" label={t("settings.hw")} value={hwAccel} onValueChange={setHwAccel} testID="set-hw" accentColor={accentColor} />
         )}
+      </Group>
+      <Group title="İzlerken ekranda">
+        <ToggleRow icon="time-outline" label={t("settings.clock")} value={showClock} onValueChange={setShowClock} testID="set-clock" accentColor={accentColor} />
+        <ToggleRow icon="information-circle-outline" label="Kanal ve liste adı (5 sn gösterilir)" value={showInfoLabel} onValueChange={setShowInfoLabel} testID="set-info-label" accentColor={accentColor} />
+        <OptionRow icon="contrast-outline" label="Kontrol çubuğu gölgesi" value={osdShade} options={SHADES} onChange={setOsdShade} accentColor={accentColor} testID="set-osd-shade" />
+      </Group>
+    </>
+  );
+
+  const liveSection = (
+    <>
+      <Group title="Rehber">
+        <StepperRow
+          icon="time-outline"
+          label={t("settings.epg_shift")}
+          value={epgShift}
+          min={-12}
+          max={12}
+          format={(v) => `${v > 0 ? "+" : ""}${v} saat`}
+          onChange={setEpgShift}
+          accentColor={accentColor}
+        />
+        <ToggleRow icon="eye-off-outline" label={t("epg.hide_empty")} value={hideNoGuide} onValueChange={setHideNoGuide} testID="set-hide-no-guide" accentColor={accentColor} />
+      </Group>
+      <Group title="Açılış">
+        <OptionRow icon="home-outline" label="Uygulama açılınca" value={startScreen} options={START_SCREENS} onChange={setStartScreen} accentColor={accentColor} testID="set-start-screen" />
+      </Group>
+    </>
+  );
+
+  const parentalSection = (
+    <>
+      <Group title="İçerik">
         <ToggleRow icon="eye-off-outline" label={t("settings.hide_adult")} value={hideAdult} onValueChange={setHideAdult} testID="set-hide-adult" accentColor={accentColor} />
       </Group>
+      <Text style={styles.note}>Yetişkin kategorileri, "XXX" gibi adlar ve bunların İzlemeye Devam Et / Son Kanallar'daki kayıtları gizlenir. Çocuk profilleri için Profiller'den ayrıca kelime engeli eklenebilir.</Text>
 
       <Group title={t("settings.group.security")}>
         <ToggleRow
@@ -304,49 +478,39 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
         <InfoRow icon="shield-checkmark-outline" label={t("settings.secure_storage")} value={t("settings.enabled")} />
       </Group>
       {pinSetupCard}
-
-      <Group title="TMDB (Zengin Meta Veriler)">
-        <InputRow label="API Anahtarı (İsteğe Bağlı)" value={tmdbApiKey} onChangeText={setTmdbApiKey} placeholder="TMDB API Key girin..." />
-      </Group>
-
-      <Group title={t("settings.group.language")}>
-        {(Object.keys(LOCALE_INFO) as Locale[]).map((code, idx, arr) => {
-          const info = LOCALE_INFO[code];
-          return (
-            <LocaleRow key={code} code={code} info={info} locale={locale} setLocale={setLocale} accentColor={accentColor} idx={idx} arr={arr} />
-          );
-        })}
-      </Group>
     </>
   );
 
-  // Technical/tuning knobs, matching Nuvio's Advanced category (startup/diagnostics/cache -
-  // low-frequency, power-user settings rather than everyday toggles).
+  // Technical/tuning knobs (backup, performance, cache, metadata key).
   const advancedSection = (
     <>
     <BackupGroup accentColor={accentColor} />
     <Group title="Performans">
-      <InfoRow
-        icon="speedometer-outline"
-        label={t("settings.buffer_size")}
-        value={t(`settings.buffer.${bufferSize}`)}
+      <OptionRow
+        icon="flash-outline"
+        label="Performans modu"
+        value={perfMode}
+        options={PERF_MODES}
+        onChange={(v) => { setPerfModeState(v); savePerfMode(v); }}
         accentColor={accentColor}
-        onPress={() => {
-          const next = bufferSize === "small" ? "normal" : bufferSize === "normal" ? "large" : "small";
-          setBufferSize(next);
-        }}
+        testID="set-perf-mode"
+        note="Uygulama yeniden açılınca geçerli olur."
       />
       <InfoRow
-        icon="time-outline"
-        label={t("settings.epg_shift")}
-        value={`${epgShift > 0 ? "+" : ""}${epgShift} Saat`}
+        icon="refresh-outline"
+        label="Önbelleği temizle"
+        value={cacheState === "busy" ? "Yenileniyor…" : cacheState === "done" ? "Liste ve rehber yenilendi ✓" : "Liste ve rehberi yeniden indir"}
         accentColor={accentColor}
-        onPress={() => {
-          let next = epgShift + 1;
-          if (next > 12) next = -12;
-          setEpgShift(next);
+        onPress={async () => {
+          if (cacheState === "busy") return;
+          setCacheState("busy");
+          try { await clearCaches(); } finally { setCacheState("done"); }
         }}
       />
+    </Group>
+    {perfMode !== PERF_MODE && <Text style={styles.note}>Performans modu değişti; uygulamayı kapatıp açınca uygulanır.</Text>}
+    <Group title="TMDB (Zengin Meta Veriler)">
+      <InputRow label="API Anahtarı (İsteğe Bağlı)" value={tmdbApiKey} onChangeText={setTmdbApiKey} placeholder="TMDB API Key girin..." />
     </Group>
     </>
   );
@@ -362,7 +526,10 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
   const sectionsByCategory: Record<Category, React.ReactNode> = {
     account: accountSection,
     library: librarySection,
-    general: generalSection,
+    appearance: appearanceSection,
+    player: playerSection,
+    live: liveSection,
+    parental: parentalSection,
     advanced: advancedSection,
     about: aboutSection,
   };
@@ -430,9 +597,12 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
 
       <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: 60 }}>
         {accountSection}
-        {generalSection}
-        {aboutSection}
+        {appearanceSection}
+        {playerSection}
+        {liveSection}
+        {parentalSection}
         {advancedSection}
+        {aboutSection}
       </ScrollView>
     </View>
   );

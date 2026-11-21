@@ -10,6 +10,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { useIPTV } from "@/src/store/iptv-store";
 import { useProfiles } from "@/src/store/profile-store";
 import { useI18n } from "@/src/store/i18n-store";
+import { usePlayerSettings } from "@/src/store/player-settings-store";
 import { filterChannels } from "@/src/utils/content-filter";
 import { sortLiveGroups } from "@/src/utils/sort-groups";
 import { cleanChannelName } from "@/src/utils/clean-name";
@@ -77,7 +78,10 @@ export default function LiveTVDesktop() {
   const [activeGroup, setActiveGroup] = useState<string>(ALL);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
-  const [hideNoGuide, setHideNoGuide] = useState(false);
+  // Remembered across launches (Settings > Live TV shows the same switch).
+  const hideNoGuide = usePlayerSettings((s) => s.hideNoGuide);
+  const setHideNoGuideSetting = usePlayerSettings((s) => s.setHideNoGuide);
+  const setHideNoGuide = (fn: (v: boolean) => boolean) => setHideNoGuideSetting(fn(hideNoGuide));
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
   const activeProfile = useProfiles((s) => s.active());
   const blocked = useMemo(() => activeProfile?.blockedKeywords || [], [activeProfile?.blockedKeywords]);
