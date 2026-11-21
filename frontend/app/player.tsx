@@ -28,7 +28,7 @@ import { useSeriesEpisodes } from "@/src/store/series-episodes-store";
 import type { SeriesEpisode } from "@/src/types/iptv";
 import { kindLabel } from "@/src/utils/kind-label";
 import { useChromecast } from "@/src/hooks/use-chromecast";
-import { createRecoveringHls } from "@/src/services/recoveringHls";
+import { createRecoveringHls, readStreamStats, type StreamStats } from "@/src/services/recoveringHls";
 
 type ResizeMode = "contain" | "cover" | "fill" | "zoom";
 const RESIZE_ORDER: ResizeMode[] = ["contain", "zoom", "cover", "fill"];
@@ -244,6 +244,8 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
   onTimeUpdate: (time: number) => void;
   onDurationChange: (duration: number) => void;
   onReady: () => void;
+  /** Called every 2s with stream facts while set (Yayın bilgisi panel). */
+  onStats?: (stats: StreamStats | null) => void;
 }>(({
   src,
   kind,
@@ -259,7 +261,16 @@ const WebHlsVideo = React.forwardRef<WebVideoHandle, {
   onTimeUpdate,
   onDurationChange,
   onReady,
+  onStats,
 }, ref) => {
+  const onStatsRef = useRef(onStats);
+  onStatsRef.current = onStats;
+  useEffect(() => {
+    if (!onStats) return;
+    const id = setInterval(() => onStatsRef.current?.(readStreamStats(videoRef.current)), 2000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!onStats, src]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const directPlayRef = useRef(false);
   // True while hls.js drives the element; its errors are then handled by createRecoveringHls.
@@ -460,6 +471,31 @@ function PlayerInfoLabel({ title, subtitle }: { title: string; subtitle?: string
 }
 const INFO_LABEL_MS = 5000;
 
+/**
+ * "Yayın bilgisi" panel: resolution, codec, fps, bitrate and buffer health, same facts as
+ * the Live TV preview badges. The buffer line is the useful one for freezes: red at 0 s
+ * means the provider isn't delivering fast enough.
+ */
+function StreamStatsPanel({ stats, accentColor, raised }: { stats: StreamStats | null; accentColor: string; raised: boolean }) {
+  const buf = stats?.bufferSec ?? 0;
+  const color = buf >= 10 ? "#34C759" : buf >= 4 ? "#FFB020" : "#FF453A";
+  const res = !stats ? "…" : stats.height >= 2000 ? "4K" : stats.height >= 1000 ? "1080p" : stats.height >= 700 ? "720p" : `${stats.height}p`;
+  return (
+    <View pointerEvents="none" style={[clockStyles.statsWrap, raised && { top: 96 }]} testID="player-stream-stats">
+      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+        <Text style={[clockStyles.statsBadge, { borderColor: accentColor, color: accentColor }]}>{res}</Text>
+        {!!stats?.codec && <Text style={clockStyles.statsBadge}>{stats.codec}</Text>}
+        {!!stats?.fps && <Text style={clockStyles.statsBadge}>{stats.fps} fps</Text>}
+        {!!stats?.kbps && <Text style={clockStyles.statsBadge}>{(stats.kbps / 1000).toFixed(1)} Mb/s</Text>}
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
+        <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: stats ? color : "#888" }} />
+        <Text style={clockStyles.statsText}>Tampon {stats ? `${Math.round(buf)} sn` : "…"}</Text>
+      </View>
+    </View>
+  );
+}
+
 /** Wall clock in the top-right corner while the controls are hidden (Settings → Clock). */
 function PlayerClock() {
   const [time, setTime] = useState(() => new Date());
@@ -477,6 +513,9 @@ function PlayerClock() {
 const clockStyles = StyleSheet.create({
   wrap: { position: "absolute", top: 18, right: 22, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 25 },
   text: { color: "#fff", fontSize: 18, fontWeight: "700", fontVariant: ["tabular-nums"], textShadowColor: "rgba(0,0,0,0.6)", textShadowRadius: 4 },
+  statsWrap: { position: "absolute", top: 64, right: 22, padding: 10, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.55)", zIndex: 25, maxWidth: 320 },
+  statsBadge: { color: "#fff", fontSize: 12, fontWeight: "800", paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, borderWidth: 1, borderColor: "rgba(255,255,255,0.35)", overflow: "hidden" },
+  statsText: { color: "#fff", fontSize: 13, fontWeight: "700", fontVariant: ["tabular-nums"] },
   infoWrap: { position: "absolute", top: 18, left: 22, maxWidth: "50%", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 25 },
   infoTitle: { color: "#fff", fontSize: 15, fontWeight: "800", textShadowColor: "rgba(0,0,0,0.6)", textShadowRadius: 4 },
   infoSub: { color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: "600", marginTop: 1 },
@@ -498,6 +537,9 @@ export default function Player() {
   const bufferSizeSetting = usePlayerSettings((s) => s.bufferSize);
   const showClockSetting = usePlayerSettings((s) => s.showClock);
   const showInfoLabelSetting = usePlayerSettings((s) => s.showInfoLabel);
+  const showStatsSetting = usePlayerSettings((s) => s.showStreamStats) && Platform.OS === "web";
+  const setShowStatsSetting = usePlayerSettings((s) => s.setShowStreamStats);
+  const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
   const playlistName = useIPTV((s) => (s.config as any)?.name || "");
 
   const liveChannels = playlist?.channels || [];
@@ -1292,6 +1334,15 @@ export default function Player() {
     if (!isLive) {
       items.push({ key: "speed", icon: "speedometer-outline", label: `${speed}x`, onPress: changeSpeed, testID: "player-speed" });
     }
+    if (Platform.OS === "web") {
+      items.push({
+        key: "stats",
+        icon: "pulse-outline",
+        label: showStatsSetting ? "Yayın bilgisi ✓" : "Yayın bilgisi",
+        onPress: () => { setShowStatsSetting(!usePlayerSettings.getState().showStreamStats); setStreamStats(null); },
+        testID: "player-stats-toggle",
+      });
+    }
     if (isTV) {
       items.push({
         key: "resize",
@@ -1335,7 +1386,7 @@ export default function Player() {
       testID: "player-info",
     });
     return items;
-  }, [isLive, canShowTracks, canUsePip, speed, sleepMinutes, title, kind, t, episodes.length, isTV, resizeMode]);
+  }, [isLive, canShowTracks, canUsePip, speed, sleepMinutes, title, kind, t, episodes.length, isTV, resizeMode, showStatsSetting]);
 
   return (
     <View style={styles.root}>
@@ -1363,6 +1414,7 @@ export default function Player() {
               onTimeUpdate={setCurrent}
               onDurationChange={setDuration}
               onReady={() => setError(null)}
+              onStats={showStatsSetting ? setStreamStats : undefined}
             />
           ) : shouldUseNativeCodecPlayer ? (
             <VLCPlayer
@@ -1420,6 +1472,7 @@ export default function Player() {
       </GestureDetector>
 
       {showClockSetting && !showControls && <PlayerClock />}
+      {showStatsSetting && <StreamStatsPanel stats={streamStats} accentColor={accentColor} raised={showControls} />}
       {showInfoLabelSetting && !showControls && (
         // Keyed by title: a channel switch remounts it, so the name shows again.
         <PlayerInfoLabel

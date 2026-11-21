@@ -31,6 +31,8 @@ type State = {
   startScreen: StartScreen;
   /** Live TV guide: hide channels without a schedule (remembered). */
   hideNoGuide: boolean;
+  /** Full-screen player: stream info panel (resolution, bitrate, buffer). */
+  showStreamStats: boolean;
 
   setAutoplay: (v: boolean) => void;
   setResume: (v: boolean) => void;
@@ -46,14 +48,15 @@ type State = {
   setOsdShade: (v: OsdShade) => void;
   setStartScreen: (v: StartScreen) => void;
   setHideNoGuide: (v: boolean) => void;
+  setShowStreamStats: (v: boolean) => void;
   init: () => Promise<void>;
 };
 
 function persist(state: State) {
-  const { autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock, showInfoLabel, defaultAspect, osdShade, startScreen, hideNoGuide } = state;
+  const { autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock, showInfoLabel, defaultAspect, osdShade, startScreen, hideNoGuide, showStreamStats } = state;
   AsyncStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock, showInfoLabel, defaultAspect, osdShade, startScreen, hideNoGuide }),
+    JSON.stringify({ autoplay, resume, hwAccel, bufferSize, hideAdult, epgShift, volume, muted, showClock, showInfoLabel, defaultAspect, osdShade, startScreen, hideNoGuide, showStreamStats }),
   ).catch(() => {});
 }
 
@@ -72,6 +75,7 @@ export const usePlayerSettings = create<State>((set, get) => ({
   osdShade: "normal",
   startScreen: "home",
   hideNoGuide: false,
+  showStreamStats: false,
 
   setAutoplay: (v) => { set({ autoplay: v }); persist(get()); },
   setResume: (v) => { set({ resume: v }); persist(get()); },
@@ -96,6 +100,7 @@ export const usePlayerSettings = create<State>((set, get) => ({
   setOsdShade: (v) => { set({ osdShade: v }); persist(get()); },
   setStartScreen: (v) => { set({ startScreen: v }); persist(get()); },
   setHideNoGuide: (v) => { set({ hideNoGuide: v }); persist(get()); },
+  setShowStreamStats: (v) => { set({ showStreamStats: v }); persist(get()); },
 
   init: async () => {
     try {
@@ -117,6 +122,7 @@ export const usePlayerSettings = create<State>((set, get) => ({
         osdShade: s.osdShade ?? "normal",
         startScreen: s.startScreen ?? "home",
         hideNoGuide: s.hideNoGuide ?? false,
+        showStreamStats: s.showStreamStats ?? false,
       });
     } catch {}
   },
