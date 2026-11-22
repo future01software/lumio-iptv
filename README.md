@@ -24,6 +24,10 @@ This application is fully responsive and officially supports:
 - **Windows** (Native Desktop app via Electron)
 - **Web Browsers** (Chrome, Safari, Edge)
 
+A separate native iPhone app written in Swift/SwiftUI lives in [`ios-native/`](ios-native/) (see its README).
+
+Privacy policy: [desktop, Android and Expo iOS](https://future01software.github.io/lumio-iptv/privacy.html) · [native iPhone app](https://future01software.github.io/lumio-iptv/privacy-ios.html)
+
 ## Features
 - **M3U & Xtream Codes Support:** Add playlists via URL or Xtream credentials.
 - **Cinematic UI:** Beautiful, dark-themed interface with Netflix-style animated intros.
