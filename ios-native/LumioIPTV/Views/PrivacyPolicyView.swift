@@ -14,6 +14,8 @@ struct PrivacyPolicyView: View {
          "Lumio, kanal listelerini, program rehberini ve yayınları doğrudan senin eklediğin sunuculardan alır. Bu sunucular bizim değildir; onlarla paylaşılan bilgiler (ör. IP adresin) o hizmeti sağlayanın gizlilik politikasına tabidir."),
         ("Cihazda saklananlar",
          "Favoriler, izleme geçmişi, önbelleğe alınmış listeler ve tercihlerin (tema, dil, profil resmi gibi) yalnızca bu cihazda tutulur."),
+        ("Uygulama kilidi",
+         "Uygulama kilidini açarsan PIN'in kendisi değil, yalnızca tuzlanmış bir özeti bu cihazın Anahtar Zinciri'nde saklanır. Face ID ile açmayı seçersen doğrulamayı iOS yapar; Lumio yüz verine hiçbir zaman erişemez."),
         ("AirPlay ve arka planda oynatma",
          "AirPlay ile yayın yaptığında görüntü doğrudan seçtiğin cihaza gider. Arka planda ses çalması yalnızca oynatmanın sürmesi içindir."),
         ("Verilerini silmek",

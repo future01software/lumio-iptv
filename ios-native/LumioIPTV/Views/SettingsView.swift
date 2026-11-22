@@ -10,6 +10,15 @@ struct SettingsView: View {
     @State private var accountInfo: XtreamAccountInfo?
     @State private var pendingDelete: Account?
     @State private var cacheState: CacheState = .idle
+    @State private var lock = AppLock.shared
+    @State private var pinSheet: PinRequest?
+
+    /// What the PIN sheet is for; `action` runs after a correct PIN (or a new PIN is set).
+    struct PinRequest: Identifiable {
+        let id = UUID()
+        let purpose: PinSheet.Purpose
+        let action: () -> Void
+    }
 
     enum CacheState { case idle, busy, done }
 
@@ -125,11 +134,41 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Yetişkin içeriği gizle", isOn: $settings.hideAdult)
+                    Toggle("Yetişkin içeriği gizle", isOn: Binding(
+                        get: { settings.hideAdult },
+                        set: { hide in
+                            // With a PIN set, showing adult content again needs the PIN.
+                            if hide || !lock.hasPin {
+                                settings.hideAdult = hide
+                            } else {
+                                pinSheet = PinRequest(purpose: .confirm("Yetişkin içeriğini göstermek için")) {
+                                    settings.hideAdult = false
+                                }
+                            }
+                        }))
+                    Toggle("Uygulama kilidi (PIN)", isOn: Binding(
+                        get: { lock.hasPin },
+                        set: { on in
+                            if on {
+                                pinSheet = PinRequest(purpose: .create) {}
+                            } else {
+                                pinSheet = PinRequest(purpose: .confirm("Kilidi kapatmak için")) { lock.removePin() }
+                            }
+                        }))
+                    if lock.hasPin {
+                        if let name = lock.biometryName {
+                            Toggle("\(name) ile aç", isOn: $lock.useBiometrics)
+                        }
+                        Button("PIN'i değiştir") {
+                            pinSheet = PinRequest(purpose: .change) {}
+                        }
+                    }
                 } header: {
                     Text("Ebeveyn ve Güvenlik")
                 } footer: {
-                    Text("Yetişkin kategorileri ve açıkça yetişkin içerikli adlar; İzlemeye devam et ve Son kanallar dahil her yerde gizlenir.")
+                    Text(lock.hasPin
+                         ? "Lumio açılırken ve arka plandan dönünce PIN sorulur. Yetişkin içeriğini göstermek de PIN ister. Yetişkin kategorileri ve açıkça yetişkin içerikli adlar; İzlemeye devam et ve Son kanallar dahil her yerde gizlenir."
+                         : "Yetişkin kategorileri ve açıkça yetişkin içerikli adlar; İzlemeye devam et ve Son kanallar dahil her yerde gizlenir. Uygulama kilidini açarsan bu ayarı kapatmak da PIN ister.")
                 }
 
                 Section {
@@ -178,6 +217,12 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showAddAccount) {
                 NavigationStack { AddAccountView() }
+            }
+            .sheet(item: $pinSheet) { request in
+                PinSheet(purpose: request.purpose) { ok in
+                    if ok { request.action() }
+                }
+                .interactiveDismissDisabled()
             }
             .sheet(isPresented: $showAvatars) {
                 AvatarPicker(selection: $model.avatar)

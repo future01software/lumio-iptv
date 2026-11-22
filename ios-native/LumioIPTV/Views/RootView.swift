@@ -3,6 +3,8 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var lock = AppLock.shared
 
     var body: some View {
         Group {
@@ -17,6 +19,12 @@ struct RootView: View {
         // Performance "Hafif": no animations anywhere.
         .transaction { if AppSettings.shared.isLightMode { $0.disablesAnimations = true } }
         .onChange(of: AppSettings.shared.hideAdult) { model.contentFilterChanged() }
+        // App lock: locked at launch when a PIN is set, and again whenever the app goes to the background.
+        .onAppear { LockWindowController.shared.update(locked: lock.isLocked) }
+        .onChange(of: lock.isLocked) { _, locked in LockWindowController.shared.update(locked: locked) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { lock.lock() }
+        }
         .tint(Theme.brand)
         .background(Theme.surface.ignoresSafeArea())
     }
