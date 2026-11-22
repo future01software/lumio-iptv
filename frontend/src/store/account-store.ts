@@ -47,9 +47,10 @@ type State = {
   signup: (email: string, password: string) => Promise<AuthResult>;
   login: (email: string, password: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 };
 
-export const useAccount = create<State>((set) => ({
+export const useAccount = create<State>((set, get) => ({
   currentEmail: null,
 
   init: async () => {
@@ -127,6 +128,19 @@ export const useAccount = create<State>((set) => ({
   },
 
   logout: async () => {
+    try { await AsyncStorage.removeItem(CURRENT_KEY); } catch {}
+    set({ currentEmail: null });
+  },
+
+  // App Store 5.1.1(v): an app that lets users create an account must let them delete it.
+  deleteAccount: async () => {
+    const email = get().currentEmail;
+    if (email) {
+      const accounts = await loadAccounts();
+      delete accounts[email];
+      await AsyncStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+      try { await AsyncStorage.removeItem(LOCK_PREFIX + email); } catch {}
+    }
     try { await AsyncStorage.removeItem(CURRENT_KEY); } catch {}
     set({ currentEmail: null });
   },

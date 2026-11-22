@@ -268,6 +268,8 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
   const clearPlaylist = useIPTV((s) => s.clearPlaylist);
   const currentEmail = useAccount((s) => s.currentEmail);
   const accountLogout = useAccount((s) => s.logout);
+  const accountDelete = useAccount((s) => s.deleteAccount);
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = React.useState(false);
   const tmdbApiKey = useIPTV((s) => s.tmdbApiKey);
   const setTmdbApiKey = useIPTV((s) => s.setTmdbApiKey);
   const autoplay = usePlayerSettings((s) => s.autoplay);
@@ -385,7 +387,33 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
               router.replace("/login");
             }}
           />
+          {currentEmail && !confirmDeleteAccount && (
+            <SettingsButton label="Hesabı Sil" danger onPress={() => setConfirmDeleteAccount(true)} />
+          )}
         </View>
+        {currentEmail && confirmDeleteAccount && (
+          <View style={styles.confirmCard}>
+            <Text style={{ color: colors.onSurface, fontSize: font.lg, fontWeight: "700" }}>Hesap silinsin mi?</Text>
+            <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
+              {currentEmail} hesabı ve bu cihazdaki playlist bilgisi kalıcı olarak silinir. Bu işlem geri alınamaz.
+            </Text>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <View style={{ flex: 1 }}><SettingsButton label="İptal" onPress={() => setConfirmDeleteAccount(false)} /></View>
+              <View style={{ flex: 1 }}>
+                <SettingsButton
+                  label="Hesabı Sil"
+                  danger
+                  onPress={async () => {
+                    setConfirmDeleteAccount(false);
+                    await clearPlaylist();
+                    await accountDelete();
+                    router.replace("/login");
+                  }}
+                />
+              </View>
+            </View>
+          </View>
+        )}
       </Group>
     </>
   );
@@ -520,6 +548,7 @@ export function SettingsView({ embedded = false }: { embedded?: boolean }) {
       <InfoRow icon="apps-outline" label={t("settings.about.app")} value="Lumio IPTV" accentColor={accentColor} />
       <InfoRow icon="pricetags-outline" label={t("settings.about.version")} value={currentVersion()} accentColor={accentColor} />
       {UPDATES_SUPPORTED && <UpdateRow accentColor={accentColor} />}
+      <InfoRow icon="shield-checkmark-outline" label={locale === "en" ? "Privacy Policy" : "Gizlilik Politikası"} value="" onPress={() => router.push("/privacy")} accentColor={accentColor} />
     </Group>
   );
 

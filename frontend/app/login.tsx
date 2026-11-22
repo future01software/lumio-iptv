@@ -325,6 +325,14 @@ export default function Login() {
           <Ionicons name="play-circle" size={20} color={colors.onSurface} />
           <Text style={styles.btnGhostText}>{t("login.try_demo")}</Text>
         </TVPressable>
+        <TVPressable
+          style={styles.signupRow}
+          focusStyle={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          onPress={() => router.push("/privacy")}
+          testID="login-privacy-link"
+        >
+          <Text style={[styles.signupText, { fontSize: font.sm }]}>Gizlilik Politikası</Text>
+        </TVPressable>
       </View>
     );
   }
@@ -347,6 +355,14 @@ export default function Login() {
             <Text style={styles.btnPrimaryWhiteText}>{authBusy ? "Oluşturuluyor…" : "Hesabı Oluştur"}</Text>
           </TVPressable>
         </View>
+        <TVPressable
+          style={styles.signupRow}
+          focusStyle={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          onPress={() => router.push("/privacy")}
+          testID="signup-privacy-link"
+        >
+          <Text style={[styles.signupText, { fontSize: font.sm }]}>Gizlilik Politikası</Text>
+        </TVPressable>
       </View>
     );
   }
